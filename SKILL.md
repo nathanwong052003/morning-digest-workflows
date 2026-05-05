@@ -36,7 +36,7 @@ The digest MUST follow this exact sequence:
 5. **Write the digest.** Use `templates/digest_template.md`. Ensure every news item includes a source link.
 6. **Generate the PDF.** Use `scripts/build_digest_pdf.py`. The output must match the clean, professional style of the user's sample.
 7. **Publish to Google Drive.** Upload to the `Morning Digest` folder and get the link.
-8. **Create the 8:00 AM event.** Add the event with the extract and Drive link. Follow the template per 'templates/calendar_event_template.md'.
+8. **Create the 8:00 AM event.** Add the event with the extract and Drive link. Follow the template per `templates/calendar_event_template.md`.
 
 ## Writing standards
 
