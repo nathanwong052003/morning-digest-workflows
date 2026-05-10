@@ -22,7 +22,17 @@ def build_fallback_summary(data: RawDigestData) -> DigestSummary:
         for event in data.calendar[:10]
     ]
     emails = [f"{email.sender} - {email.subject}" for email in data.emails[:10]]
-    news = [f"{item.title} ({item.source})" for item in data.news[:10]]
+    if data.ranked_news:
+        news = [
+            (
+                f"{item.ai_summary} ({item.source})"
+                if item.ai_summary
+                else f"{item.title} ({item.source})"
+            )
+            for item in data.ranked_news[:10]
+        ]
+    else:
+        news = [f"{item.title} ({item.source})" for item in data.news[:10]]
     action_items = [
         "Review top calendar conflicts and prioritize today's meetings.",
         "Reply to urgent inbox threads first.",
@@ -91,14 +101,10 @@ def run(settings: Settings) -> int:
     elif settings.deepseek_api_key:
         try:
             deepseek = DeepSeekClient(settings=settings, logger=logger)
-            ranked_news = deepseek.rank_news(news_items, calendar_events)
+            ranked_news = deepseek.rank_news(news_items)
             ranked_news = deepseek.refine_news_summaries(ranked_news)
             raw_data.ranked_news = ranked_news
-            summary = deepseek.summarize(
-                calendar_events=calendar_events,
-                emails=gmail_threads,
-                ranked_news=ranked_news,
-            )
+            summary = build_fallback_summary(raw_data)
             if deepseek.is_budget_exceeded():
                 warning_banner = "⚠️ AI unavailable: token budget exceeded. Raw fallback used."
                 summary = build_fallback_summary(raw_data)

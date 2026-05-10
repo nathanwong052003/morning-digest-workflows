@@ -3,9 +3,10 @@ from __future__ import annotations
 import html
 import os
 import re
-from datetime import date
+from datetime import date, datetime, time
 from pathlib import Path
 from time import perf_counter
+from urllib.parse import urlparse
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -164,6 +165,67 @@ def _parse_schedule_line(line: str) -> tuple[str, str]:
     return "", line.strip()
 
 
+def _parse_iso_datetime(raw: str) -> datetime | None:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _format_ampm(dt: datetime) -> str:
+    hour = dt.hour % 12
+    if hour == 0:
+        hour = 12
+    suffix = "am" if dt.hour < 12 else "pm"
+    return f"{hour}{suffix}"
+
+
+def _format_schedule_display(line: str, digest_date: date) -> str:
+    text = (line or "").strip()
+    if not text:
+        return ""
+
+    title = text
+    dt: datetime | None = None
+
+    if ": " in text:
+        prefix, possible_title = text.rsplit(": ", 1)
+        if " - " in prefix:
+            start_raw = prefix.split(" - ", 1)[0].strip()
+            parsed = _parse_iso_datetime(start_raw)
+            if parsed:
+                dt = parsed
+                title = possible_title.strip()
+
+    if dt is None:
+        start_time, parsed_title = _parse_schedule_line(text)
+        title = parsed_title
+        if start_time:
+            try:
+                hour_str, minute_str = start_time.split(":", 1)
+                dt = datetime.combine(digest_date, time(hour=int(hour_str), minute=int(minute_str)))
+            except ValueError:
+                dt = None
+
+    if dt is None:
+        return title
+
+    date_label = f"{dt.strftime('%B')} {dt.day}, {dt.year}"
+    return f"{date_label} {_format_ampm(dt)}: {title}"
+
+
+def _split_inbox_line(line: str) -> tuple[str, str]:
+    text = (line or "").strip()
+    for sep in (" - ", " — "):
+        if sep in text:
+            sender, summary = text.split(sep, 1)
+            return sender.strip(), summary.strip()
+    return text, ""
+
+
 def _inbox_label(text: str) -> str:
     lowered = text.lower()
     if any(token in lowered for token in ("tax", "ipo", "market", "finance", "gdp", "bank", "money")):
@@ -312,29 +374,38 @@ def _add_section_header(story: list, styles: dict[str, ParagraphStyle], heading:
     story.append(Spacer(1, 10))
 
 
-def _render_schedule(story: list, styles: dict[str, ParagraphStyle], summary: DigestSummary, raw_data: RawDigestData) -> None:
-    lines = summary.schedule or [f"{event.start_local} - {event.end_local}: {event.title}" for event in raw_data.calendar[:12]]
+def _render_schedule(
+    story: list,
+    styles: dict[str, ParagraphStyle],
+    summary: DigestSummary,
+    raw_data: RawDigestData,
+    digest_date: date,
+) -> None:
+    lines = [f"{event.start_local} - {event.end_local}: {event.title}" for event in raw_data.calendar[:12]] or summary.schedule
     if not lines:
         story.append(Paragraph("• None", styles["list_item"]))
         return
     for line in lines:
-        start, title = _parse_schedule_line(line)
-        if start:
-            body = f'<font color="#777777" size="9">{_escape(start)}</font>&nbsp;&nbsp;<b>{_escape(title)}</b>'
-        else:
-            body = f"<b>{_escape(title)}</b>"
-        story.append(Paragraph(body, styles["list_item"], bulletText="•"))
+        body = _format_schedule_display(line, digest_date)
+        story.append(Paragraph(f"<b>{_escape(body)}</b>", styles["list_item"], bulletText="•"))
 
 
 def _render_inbox(story: list, styles: dict[str, ParagraphStyle], summary: DigestSummary, raw_data: RawDigestData) -> None:
-    lines = summary.emails or [f"{email.sender} — {email.subject}" for email in raw_data.emails[:10]]
+    short_label = {
+        "FINANCE": "FIN",
+        "BRIEFING": "NEWS",
+        "TECH": "TECH",
+    }
+    lines = [f"{email.sender} - {email.subject}" for email in raw_data.emails[:10]] or summary.emails
     if not lines:
         story.append(Paragraph("• None", styles["list_item"]))
         return
     for line in lines:
-        story.append(
-            Paragraph(f"{_pill_html(_inbox_label(line))}&nbsp; {_escape(line)}", styles["list_item"], bulletText="•")
-        )
+        label = short_label.get(_inbox_label(line), "NEWS")
+        sender, summary_text = _split_inbox_line(line)
+        first_line = f"<b>[{_escape(label)}] {_escape(sender)}</b>"
+        body = first_line if not summary_text else f"{first_line}<br/>{_escape(summary_text)}"
+        story.append(Paragraph(body, styles["list_item"], bulletText="•"))
 
 
 def _render_news_groups(
@@ -368,20 +439,11 @@ def _render_news_groups(
         )
 
 
-def _schedule_items_html(summary: DigestSummary, raw_data: RawDigestData) -> str:
-    lines = summary.schedule or [f"{event.start_local} - {event.end_local}: {event.title}" for event in raw_data.calendar[:12]]
+def _schedule_items_html(summary: DigestSummary, raw_data: RawDigestData, digest_date: date) -> str:
+    lines = [f"{event.start_local} - {event.end_local}: {event.title}" for event in raw_data.calendar[:12]] or summary.schedule
     if not lines:
         return "<li>None</li>"
-    items = []
-    for line in lines:
-        start, title = _parse_schedule_line(line)
-        if start:
-            items.append(
-                f'<li><span style="color:#777;font-size:9pt;">{_escape(start)}</span>&nbsp;&nbsp;<strong>{_escape(title)}</strong></li>'
-            )
-        else:
-            items.append(f"<li><strong>{_escape(title)}</strong></li>")
-    return "\n".join(items)
+    return "\n".join([f"<li><strong>{_escape(_format_schedule_display(line, digest_date))}</strong></li>" for line in lines])
 
 
 def _inbox_items_html(summary: DigestSummary, raw_data: RawDigestData) -> str:
@@ -390,13 +452,16 @@ def _inbox_items_html(summary: DigestSummary, raw_data: RawDigestData) -> str:
         "BRIEFING": "NEWS",
         "TECH": "TECH",
     }
-    lines = summary.emails or [f"{email.sender} — {email.subject}" for email in raw_data.emails[:10]]
+    lines = [f"{email.sender} - {email.subject}" for email in raw_data.emails[:10]] or summary.emails
     if not lines:
         return "<li>None</li>"
     rows = []
     for line in lines:
         label = short_label.get(_inbox_label(line), "NEWS")
-        rows.append(f'<li><span class="inbox-tag">[{_escape(label)}]</span> {_escape(line)}</li>')
+        sender, summary_text = _split_inbox_line(line)
+        first_line = f'<div class="inbox-primary"><span class="inbox-tag">[{_escape(label)}]</span> {_escape(sender)}</div>'
+        second_line = f'<div class="inbox-secondary">{_escape(summary_text)}</div>' if summary_text else ""
+        rows.append(f"<li>{first_line}{second_line}</li>")
     return "\n".join(rows)
 
 
@@ -406,14 +471,17 @@ def _news_blocks_html(items: list[RankedNewsItem]) -> str:
     blocks = []
     for row in items:
         safe_url = _escape(str(row.url))
+        host = urlparse(str(row.url)).netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
         tag = row.tag.strip() or "News"
         body = _clean_display_text((row.ai_summary or row.snippet or "").strip())
         blocks.append(
             "<div class=\"item\">\n"
             f"<div class=\"tag\">{_escape(tag)}</div>\n"
-            f"<div class=\"headline\">{_escape(row.title)}</div>\n"
+            f"<a class=\"headline headline-link\" href=\"{safe_url}\">{_escape(row.title)}</a>\n"
             f"<p class=\"body-text\">{_escape(body)}</p>\n"
-            f"<a class=\"link\" href=\"{safe_url}\">{safe_url}</a>\n"
+            f"<div class=\"source\">{_escape(row.source)}{f' · {_escape(host)}' if host else ''}</div>\n"
             "</div>"
         )
     return "\n".join(blocks)
@@ -436,7 +504,7 @@ def _render_html(*, summary: DigestSummary, raw_data: RawDigestData, digest_date
     return (
         template.replace("{{DIGEST_DATE}}", _escape(display_date))
         .replace("{{WARNING_BANNER_HTML}}", _warning_banner_html(warning_banner))
-        .replace("{{SCHEDULE_ITEMS_HTML}}", _schedule_items_html(summary, raw_data))
+        .replace("{{SCHEDULE_ITEMS_HTML}}", _schedule_items_html(summary, raw_data, digest_date))
         .replace("{{INBOX_ITEMS_HTML}}", _inbox_items_html(summary, raw_data))
         .replace("{{TECHNOLOGY_ITEMS_HTML}}", _news_blocks_html(tech_news))
         .replace("{{SEA_HK_ITEMS_HTML}}", _news_blocks_html(sea_hk))
@@ -488,7 +556,7 @@ def _generate_pdf_with_reportlab(
         story.append(Paragraph(_escape(warning_banner), styles["warning"]))
 
     _add_section_header(story, styles, "TODAY'S SCHEDULE", doc.width)
-    _render_schedule(story, styles, summary, raw_data)
+    _render_schedule(story, styles, summary, raw_data, digest_date)
     _append_rule(story)
 
     _add_section_header(story, styles, "PRIORITY INBOX", doc.width)

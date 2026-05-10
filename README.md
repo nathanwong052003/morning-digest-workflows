@@ -2,7 +2,7 @@
 
 Automated daily digest at **08:00 UTC+8**:
 1. Collects Google Calendar events, Gmail threads, and news feeds.
-2. Ranks + summarizes with DeepSeek.
+2. Uses DeepSeek only for news ranking + summary.
 3. Generates a clean PDF (`reportlab`).
 4. Uploads PDF to Google Drive and creates a Google Calendar event with the PDF link.
 
@@ -114,6 +114,7 @@ Workflow: `.github/workflows/digest.yml`
 
 - Structured JSON logs include `run_id`, `step`, `tokens_used`, and `latency`.
 - Never logs secrets or full email bodies (metadata + snippets only).
+- Gmail inbox data never leaves the local runtime for AI calls; DeepSeek only receives news items.
 - All external calls are wrapped with retry + exponential backoff.
 - News feed responses are cached for 12 hours.
 - Daily token spend is tracked and warnings emitted above threshold.
