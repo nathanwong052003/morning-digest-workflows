@@ -1,0 +1,561 @@
+from __future__ import annotations
+
+import html
+import os
+import re
+from datetime import date
+from pathlib import Path
+from time import perf_counter
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+from build_digest_pdf import convert as convert_html_to_pdf
+from models import DigestSummary, NewsItem, RankedNewsItem, RawDigestData
+
+
+def _pdf_engine() -> str:
+    engine = os.getenv("DIGEST_PDF_ENGINE", "auto").strip().lower()
+    if engine in {"auto", "weasyprint", "reportlab"}:
+        return engine
+    return "auto"
+
+
+def _register_unicode_font() -> str:
+    font_name = "STSong-Light"
+    if font_name not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+    return font_name
+
+
+def _styles() -> dict[str, ParagraphStyle]:
+    base = getSampleStyleSheet()
+    content_font = _register_unicode_font()
+    return {
+        "title": ParagraphStyle(
+            "title",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=22,
+            leading=24,
+            textColor=colors.HexColor("#000000"),
+        ),
+        "date": ParagraphStyle(
+            "date",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=9,
+            textColor=colors.HexColor("#888888"),
+            alignment=2,
+        ),
+        "subtitle": ParagraphStyle(
+            "subtitle",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=9,
+            leading=11,
+            textColor=colors.HexColor("#888888"),
+            spaceAfter=6,
+        ),
+        "section": ParagraphStyle(
+            "section",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#555555"),
+        ),
+        "list_item": ParagraphStyle(
+            "list_item",
+            parent=base["Normal"],
+            fontName=content_font,
+            fontSize=10,
+            leading=13,
+            textColor=colors.HexColor("#222222"),
+            leftIndent=13,
+            bulletIndent=2,
+            spaceAfter=4,
+        ),
+        "pill_line": ParagraphStyle(
+            "pill_line",
+            parent=base["Normal"],
+            fontName=content_font,
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#222222"),
+            spaceAfter=2,
+        ),
+        "article_title": ParagraphStyle(
+            "article_title",
+            parent=base["Normal"],
+            fontName=content_font,
+            fontSize=10,
+            leading=13,
+            textColor=colors.HexColor("#1D4ED8"),
+            spaceAfter=3,
+        ),
+        "article_body": ParagraphStyle(
+            "article_body",
+            parent=base["Normal"],
+            fontName=content_font,
+            fontSize=10,
+            leading=13,
+            textColor=colors.HexColor("#222222"),
+            spaceAfter=2,
+        ),
+        "article_source": ParagraphStyle(
+            "article_source",
+            parent=base["Normal"],
+            fontName=content_font,
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#AAAAAA"),
+            spaceAfter=14,
+        ),
+        "muted_small": ParagraphStyle(
+            "muted_small",
+            parent=base["Normal"],
+            fontName=content_font,
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#AAAAAA"),
+            spaceAfter=0,
+        ),
+        "warning": ParagraphStyle(
+            "warning",
+            parent=base["Normal"],
+            fontName=content_font,
+            fontSize=10,
+            textColor=colors.HexColor("#7C2D12"),
+            backColor=colors.HexColor("#FEF3C7"),
+            borderPadding=6,
+            spaceAfter=10,
+        ),
+    }
+
+
+def _escape(text: str) -> str:
+    return html.escape(text, quote=True)
+
+
+def _clean_display_text(text: str) -> str:
+    cleaned = html.unescape(text or "").strip()
+    cleaned = re.sub(r"\s*\[\s*(?:\.\.\.|…)\s*\]\s*$", "", cleaned)
+    cleaned = re.sub(r"\s*\[\s*&?#8230;\s*\]\s*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip()
+    if cleaned and cleaned[-1] not in ".!?":
+        sentence_endings = [cleaned.rfind("."), cleaned.rfind("!"), cleaned.rfind("?")]
+        last_end = max(sentence_endings)
+        if last_end >= 0:
+            cleaned = cleaned[: last_end + 1].strip()
+    return cleaned
+
+
+def _parse_schedule_line(line: str) -> tuple[str, str]:
+    pattern = r"^\s*([0-2]?\d:\d{2})(?:\s*-\s*[0-2]?\d:\d{2})?\s*[:\-]\s*(.+?)\s*$"
+    match = re.match(pattern, line)
+    if match:
+        return match.group(1), match.group(2)
+    return "", line.strip()
+
+
+def _inbox_label(text: str) -> str:
+    lowered = text.lower()
+    if any(token in lowered for token in ("tax", "ipo", "market", "finance", "gdp", "bank", "money")):
+        return "FINANCE"
+    if any(token in lowered for token in ("briefing", "china", "policy", "geopolitic", "south china morning post")):
+        return "BRIEFING"
+    if any(token in lowered for token in ("ai", "openai", "anthropic", "tech", "software", "cloud", "developer")):
+        return "TECH"
+    return "BRIEFING"
+
+
+def _infer_category(item: RankedNewsItem | NewsItem) -> str:
+    haystack = f"{item.title} {item.snippet} {item.source}".lower()
+    if any(token in haystack for token in ("hong kong", " hk ", "hk$", "hang seng", "legco", "hksar")):
+        return "HONG KONG"
+    sea_tokens = (
+        "southeast asia",
+        "asean",
+        "vietnam",
+        "malaysia",
+        "singapore",
+        "indonesia",
+        "thailand",
+        "philippines",
+        "cambodia",
+        "laos",
+        "myanmar",
+        "brunei",
+        "timor-leste",
+    )
+    if any(token in haystack for token in sea_tokens):
+        return "SOUTHEAST ASIA"
+    return "TECHNOLOGY"
+
+
+def _to_ranked(item: NewsItem, category: str) -> RankedNewsItem:
+    return RankedNewsItem(
+        title=item.title,
+        url=item.url,
+        source=item.source,
+        published_at=item.published_at,
+        snippet=item.snippet,
+        relevance=50,
+        reason="Fallback category mapping",
+        category=category,
+        tag="News",
+        ai_summary="",
+    )
+
+
+def _split_news(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[RankedNewsItem], list[RankedNewsItem]]:
+    ranked = list(raw_data.ranked_news[:18])
+    for item in ranked:
+        if item.category == "TECHNOLOGY":
+            inferred = _infer_category(item)
+            if inferred in {"SOUTHEAST ASIA", "HONG KONG"}:
+                item.category = inferred
+
+    tech = [item for item in ranked if item.category == "TECHNOLOGY"]
+    sea = [item for item in ranked if item.category == "SOUTHEAST ASIA"]
+    hk = [item for item in ranked if item.category == "HONG KONG"]
+
+    used_urls = {str(item.url) for item in ranked}
+    for item in raw_data.news:
+        if str(item.url) in used_urls:
+            continue
+        inferred = _infer_category(item)
+        ranked_item = _to_ranked(item, inferred)
+        if inferred == "SOUTHEAST ASIA" and len(sea) < 3:
+            sea.append(ranked_item)
+            used_urls.add(str(item.url))
+        elif inferred == "HONG KONG" and len(hk) < 3:
+            hk.append(ranked_item)
+            used_urls.add(str(item.url))
+        elif inferred == "TECHNOLOGY" and len(tech) < 3:
+            tech.append(ranked_item)
+            used_urls.add(str(item.url))
+
+    if not tech:
+        tech = [_to_ranked(item, "TECHNOLOGY") for item in raw_data.news[:3]]
+    if not sea:
+        sea = [_to_ranked(item, "SOUTHEAST ASIA") for item in raw_data.news[3:6]]
+    if not hk:
+        hk = [_to_ranked(item, "HONG KONG") for item in raw_data.news[6:9]]
+
+    return tech[:3], sea[:3], hk[:3]
+
+
+def _label_colors(label: str) -> tuple[str, str]:
+    palette = {
+        "TECH": ("#D1FAE5", "#065F46"),
+        "BRIEFING": ("#DBEAFE", "#1E40AF"),
+        "FINANCE": ("#FEF3C7", "#92400E"),
+        "CYBERSECURITY": ("#FEE2E2", "#991B1B"),
+        "AI": ("#EDE9FE", "#5B21B6"),
+        "TRADE": ("#FEF9C3", "#713F12"),
+        "BUSINESS": ("#F3F4F6", "#1F2937"),
+    }
+    return palette.get(label.upper(), ("#F3F4F6", "#1F2937"))
+
+
+def _pill_html(label: str) -> str:
+    bg, fg = _label_colors(label)
+    return (
+        f'<font backcolor="{bg}" color="{fg}">'
+        f"<b>&nbsp;{_escape(label.upper())}&nbsp;</b>"
+        "</font>"
+    )
+
+
+def _append_rule(
+    story: list,
+    *,
+    thickness: float = 1.0,
+    color_hex: str = "#E5E5E5",
+    before: float = 10,
+    after: float = 10,
+) -> None:
+    story.append(
+        HRFlowable(
+            width="100%",
+            thickness=thickness,
+            lineCap="round",
+            color=colors.HexColor(color_hex),
+            spaceBefore=before,
+            spaceAfter=after,
+        )
+    )
+
+
+def _add_section_header(story: list, styles: dict[str, ParagraphStyle], heading: str, width: float) -> None:
+    bar = Table([[Paragraph(_escape(heading.upper()), styles["section"])]], colWidths=[width])
+    bar.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F4F4")),
+                ("LINEBEFORE", (0, 0), (0, 0), 3, colors.HexColor("#CCCCCC")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    story.append(bar)
+    story.append(Spacer(1, 10))
+
+
+def _render_schedule(story: list, styles: dict[str, ParagraphStyle], summary: DigestSummary, raw_data: RawDigestData) -> None:
+    lines = summary.schedule or [f"{event.start_local} - {event.end_local}: {event.title}" for event in raw_data.calendar[:12]]
+    if not lines:
+        story.append(Paragraph("• None", styles["list_item"]))
+        return
+    for line in lines:
+        start, title = _parse_schedule_line(line)
+        if start:
+            body = f'<font color="#777777" size="9">{_escape(start)}</font>&nbsp;&nbsp;<b>{_escape(title)}</b>'
+        else:
+            body = f"<b>{_escape(title)}</b>"
+        story.append(Paragraph(body, styles["list_item"], bulletText="•"))
+
+
+def _render_inbox(story: list, styles: dict[str, ParagraphStyle], summary: DigestSummary, raw_data: RawDigestData) -> None:
+    lines = summary.emails or [f"{email.sender} — {email.subject}" for email in raw_data.emails[:10]]
+    if not lines:
+        story.append(Paragraph("• None", styles["list_item"]))
+        return
+    for line in lines:
+        story.append(
+            Paragraph(f"{_pill_html(_inbox_label(line))}&nbsp; {_escape(line)}", styles["list_item"], bulletText="•")
+        )
+
+
+def _render_news_groups(
+    story: list,
+    styles: dict[str, ParagraphStyle],
+    heading: str,
+    items: list[RankedNewsItem],
+    width: float,
+) -> None:
+    _add_section_header(story, styles, heading, width)
+    if not items:
+        story.append(Paragraph("<i>No stories available.</i>", styles["article_body"]))
+        return
+    for row in items:
+        safe_url = _escape(str(row.url))
+        story.append(Paragraph(_pill_html(row.tag.strip() or "News"), styles["pill_line"]))
+        story.append(
+            Paragraph(
+                f'<link href="{safe_url}"><u><b>{_escape(row.title)}</b></u></link>',
+                styles["article_title"],
+            )
+        )
+        body = _clean_display_text((row.ai_summary or row.snippet or "").strip())
+        if body:
+            story.append(Paragraph(_escape(body), styles["article_body"]))
+        story.append(
+            Paragraph(
+                f"<i><link href=\"{safe_url}\">{_escape(row.source)}</link></i>",
+                styles["article_source"],
+            )
+        )
+
+
+def _schedule_items_html(summary: DigestSummary, raw_data: RawDigestData) -> str:
+    lines = summary.schedule or [f"{event.start_local} - {event.end_local}: {event.title}" for event in raw_data.calendar[:12]]
+    if not lines:
+        return "<li>None</li>"
+    items = []
+    for line in lines:
+        start, title = _parse_schedule_line(line)
+        if start:
+            items.append(
+                f'<li><span style="color:#777;font-size:9pt;">{_escape(start)}</span>&nbsp;&nbsp;<strong>{_escape(title)}</strong></li>'
+            )
+        else:
+            items.append(f"<li><strong>{_escape(title)}</strong></li>")
+    return "\n".join(items)
+
+
+def _inbox_items_html(summary: DigestSummary, raw_data: RawDigestData) -> str:
+    short_label = {
+        "FINANCE": "FIN",
+        "BRIEFING": "NEWS",
+        "TECH": "TECH",
+    }
+    lines = summary.emails or [f"{email.sender} — {email.subject}" for email in raw_data.emails[:10]]
+    if not lines:
+        return "<li>None</li>"
+    rows = []
+    for line in lines:
+        label = short_label.get(_inbox_label(line), "NEWS")
+        rows.append(f'<li><span class="inbox-tag">[{_escape(label)}]</span> {_escape(line)}</li>')
+    return "\n".join(rows)
+
+
+def _news_blocks_html(items: list[RankedNewsItem]) -> str:
+    if not items:
+        return ""
+    blocks = []
+    for row in items:
+        safe_url = _escape(str(row.url))
+        tag = row.tag.strip() or "News"
+        body = _clean_display_text((row.ai_summary or row.snippet or "").strip())
+        blocks.append(
+            "<div class=\"item\">\n"
+            f"<div class=\"tag\">{_escape(tag)}</div>\n"
+            f"<div class=\"headline\">{_escape(row.title)}</div>\n"
+            f"<p class=\"body-text\">{_escape(body)}</p>\n"
+            f"<a class=\"link\" href=\"{safe_url}\">{safe_url}</a>\n"
+            "</div>"
+        )
+    return "\n".join(blocks)
+
+
+def _warning_banner_html(warning_banner: str | None) -> str:
+    if not warning_banner:
+        return ""
+    return f'<div class="warning-banner">{_escape(warning_banner)}</div>'
+
+
+def _render_html(*, summary: DigestSummary, raw_data: RawDigestData, digest_date: date, warning_banner: str | None) -> str:
+    template_path = Path(__file__).with_name("template.html")
+    template = template_path.read_text(encoding="utf-8")
+    display_date = f"{digest_date.strftime('%B')} {digest_date.day}, {digest_date.year}"
+    tech_news, sea_news, hk_news = _split_news(raw_data)
+    sea_hk = sea_news + hk_news
+    _ = summary
+    _ = warning_banner
+    return (
+        template.replace("{{DIGEST_DATE}}", _escape(display_date))
+        .replace("{{WARNING_BANNER_HTML}}", _warning_banner_html(warning_banner))
+        .replace("{{SCHEDULE_ITEMS_HTML}}", _schedule_items_html(summary, raw_data))
+        .replace("{{INBOX_ITEMS_HTML}}", _inbox_items_html(summary, raw_data))
+        .replace("{{TECHNOLOGY_ITEMS_HTML}}", _news_blocks_html(tech_news))
+        .replace("{{SEA_HK_ITEMS_HTML}}", _news_blocks_html(sea_hk))
+    )
+
+
+def _generate_pdf_with_reportlab(
+    *,
+    summary: DigestSummary,
+    raw_data: RawDigestData,
+    output_path: Path,
+    digest_date: date,
+    warning_banner: str | None,
+) -> None:
+    doc = SimpleDocTemplate(
+        str(output_path),
+        pagesize=A4,
+        title="Morning Digest",
+        author="Morning Digest Automation",
+        topMargin=15 * mm,
+        leftMargin=15 * mm,
+        rightMargin=15 * mm,
+        bottomMargin=15 * mm,
+    )
+    styles = _styles()
+    story: list = []
+
+    display_date = f"{digest_date.strftime('%B')} {digest_date.day}, {digest_date.year}"
+    header = Table(
+        [[Paragraph("Morning Digest", styles["title"]), Paragraph(display_date, styles["date"])]],
+        colWidths=[doc.width * 0.75, doc.width * 0.25],
+    )
+    header.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    story.append(header)
+    story.append(Paragraph(f"{digest_date.strftime('%A')} · Hong Kong Time", styles["subtitle"]))
+    _append_rule(story, thickness=2, color_hex="#000000", before=2, after=10)
+
+    if warning_banner:
+        story.append(Paragraph(_escape(warning_banner), styles["warning"]))
+
+    _add_section_header(story, styles, "TODAY'S SCHEDULE", doc.width)
+    _render_schedule(story, styles, summary, raw_data)
+    _append_rule(story)
+
+    _add_section_header(story, styles, "PRIORITY INBOX", doc.width)
+    _render_inbox(story, styles, summary, raw_data)
+    _append_rule(story)
+
+    tech_news, sea_news, hk_news = _split_news(raw_data)
+    _render_news_groups(story, styles, "TECHNOLOGY", tech_news, doc.width)
+    _append_rule(story)
+    _render_news_groups(story, styles, "SOUTHEAST ASIA", sea_news, doc.width)
+    _append_rule(story)
+    _render_news_groups(story, styles, "HONG KONG", hk_news, doc.width)
+
+    _append_rule(story)
+    story.append(
+        Paragraph(
+            f"<i>News: {display_date} · Calendar &amp; email: live snapshot · Generated by Morning Digest</i>",
+            styles["muted_small"],
+        )
+    )
+    doc.build(story)
+
+
+def generate_digest_pdf(
+    *,
+    summary: DigestSummary,
+    raw_data: RawDigestData,
+    output_path: Path,
+    digest_date: date,
+    timezone_name: str,
+    warning_banner: str | None,
+) -> None:
+    started = perf_counter()
+    _ = timezone_name
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    engine = _pdf_engine()
+    if engine == "reportlab":
+        _generate_pdf_with_reportlab(
+            summary=summary,
+            raw_data=raw_data,
+            output_path=output_path,
+            digest_date=digest_date,
+            warning_banner=warning_banner,
+        )
+        _ = perf_counter() - started
+        return
+
+    rendered_html = _render_html(
+        summary=summary,
+        raw_data=raw_data,
+        digest_date=digest_date,
+        warning_banner=warning_banner,
+    )
+    html_output_path = output_path.with_suffix(".html")
+    html_output_path.write_text(rendered_html, encoding="utf-8")
+    try:
+        convert_html_to_pdf(html_output_path, output_path)
+    except Exception:
+        if engine == "weasyprint":
+            raise
+        _generate_pdf_with_reportlab(
+            summary=summary,
+            raw_data=raw_data,
+            output_path=output_path,
+            digest_date=digest_date,
+            warning_banner=warning_banner,
+        )
+
+    _ = perf_counter() - started

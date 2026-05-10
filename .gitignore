@@ -1,1 +1,12 @@
 /scripts
+.env
+/__pycache__
+client_secret.json
+/distribution/__pycache__
+/pdf/__pycache__
+/utils/__pycache__
+*.html
+/output
+/collectors/__pycache__
+/auth/__pycache__
+/ai/__pycache__

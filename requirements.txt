@@ -1,0 +1,11 @@
+google-api-python-client>=2.169.0
+google-auth>=2.40.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+openai>=1.82.0
+pydantic>=2.11.0
+reportlab>=4.4.1
+weasyprint>=62.3
+feedparser>=6.0.11
+requests>=2.32.3
+tzdata>=2024.1
