@@ -122,7 +122,6 @@ def run(settings: Settings) -> int:
         raw_data=raw_data,
         output_path=output_path,
         digest_date=digest_date,
-        timezone_name=settings.timezone_name,
         warning_banner=warning_banner,
     )
     logger.info("pdf_generated", step="pdf", output_path=str(output_path))

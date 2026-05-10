@@ -21,6 +21,33 @@ def _build_query(settings: Settings) -> str:
     return f"{base} ({keywords})"
 
 
+def _is_excluded(labels: list[str], excluded_labels: list[str]) -> bool:
+    """Return True if any of the thread's labels match an excluded label."""
+    if not excluded_labels:
+        return False
+    label_set = {label.upper() for label in labels}
+    return any(excluded.upper() in label_set for excluded in excluded_labels)
+
+
+def _is_blocked_sender(sender: str, blocked_senders: list[str]) -> bool:
+    """Return True if the sender matches any blocked sender (exact or domain suffix)."""
+    if not blocked_senders:
+        return False
+    sender_lower = sender.lower().strip()
+    for blocked in blocked_senders:
+        blocked_lower = blocked.lower().strip()
+        if blocked_lower == sender_lower:
+            return True
+        # Domain suffix match: e.g. "@example.com" matches "user@example.com"
+        if blocked_lower.startswith("@"):
+            if sender_lower.endswith(blocked_lower):
+                return True
+        # Domain match without @: e.g. "example.com" matches "user@example.com"
+        elif "@" not in blocked_lower and sender_lower.endswith(f"@{blocked_lower}"):
+            return True
+    return False
+
+
 def _get_header(headers: list[dict[str, str]], name: str) -> str:
     lowered = name.lower()
     for header in headers:
@@ -122,6 +149,14 @@ def collect_gmail_threads(
         subject = _decode_mime_header(_get_header(headers, "Subject")) or "(No subject)"
         snippet = truncate_text(detail.get("snippet", ""), limit=500)
         labels = first.get("labelIds", [])
+
+        # Skip threads with excluded labels (e.g. CATEGORY_PROMOTIONS)
+        if _is_excluded(labels, settings.gmail_excluded_labels):
+            continue
+
+        # Skip threads from blocked senders
+        if _is_blocked_sender(sender, settings.gmail_blocked_senders):
+            continue
 
         threads.append(
             GmailThread(

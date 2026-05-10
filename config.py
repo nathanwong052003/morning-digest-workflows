@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import uuid
 from dataclasses import dataclass
@@ -19,18 +18,6 @@ def _parse_bool(value: str | None, *, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _parse_json_list(value: str | None) -> list[str]:
-    if not value:
-        return []
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return []
-    if isinstance(parsed, list):
-        return [str(item).strip() for item in parsed if str(item).strip()]
-    return []
 
 
 def _load_dotenv(path: Path) -> None:
@@ -61,15 +48,17 @@ class Settings:
     gmail_user_id: str
     gmail_label_ids: list[str]
     gmail_keywords: list[str]
+    gmail_excluded_labels: list[str]
+    gmail_blocked_senders: list[str]
     gmail_max_threads: int
 
     news_rss_urls: list[str]
-    news_api_urls: list[str]
     news_cache_path: str
     news_cache_ttl_seconds: int
     max_news_items: int
 
     drive_folder_id: str
+    drive_file_name: str
     digest_calendar_id: str
     digest_event_hour: int
     digest_event_minute: int
@@ -119,13 +108,15 @@ def load_settings() -> Settings:
         gmail_user_id=os.getenv("GMAIL_USER_ID", "me"),
         gmail_label_ids=_split_csv(os.getenv("GMAIL_LABEL_IDS")),
         gmail_keywords=_split_csv(os.getenv("GMAIL_KEYWORDS")),
+        gmail_excluded_labels=_split_csv(os.getenv("GMAIL_EXCLUDED_LABELS")),
+        gmail_blocked_senders=_split_csv(os.getenv("GMAIL_BLOCKED_SENDERS")),
         gmail_max_threads=int(os.getenv("GMAIL_MAX_THREADS", "20")),
         news_rss_urls=_split_csv(os.getenv("NEWS_RSS_URLS")),
-        news_api_urls=_parse_json_list(os.getenv("NEWS_API_URLS_JSON")),
         news_cache_path=os.getenv("NEWS_CACHE_PATH", "/tmp/morning_digest_news_cache.json"),
         news_cache_ttl_seconds=int(os.getenv("NEWS_CACHE_TTL_SECONDS", "43200")),
         max_news_items=int(os.getenv("MAX_NEWS_ITEMS", "30")),
         drive_folder_id=os.getenv("DRIVE_FOLDER_ID", ""),
+        drive_file_name=os.getenv("DRIVE_FILE_NAME", "Morning Digest - Latest.pdf"),
         digest_calendar_id=os.getenv("DIGEST_CALENDAR_ID", "primary"),
         digest_event_hour=int(os.getenv("DIGEST_EVENT_HOUR", "8")),
         digest_event_minute=int(os.getenv("DIGEST_EVENT_MINUTE", "0")),

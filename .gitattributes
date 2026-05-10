@@ -1,2 +1,5 @@
-# Auto detect text files and perform LF normalization
+# Normalize to platform-native line endings
 * text=auto
+
+# Explicitly ensure README uses CRLF (Windows-style) for GitHub compatibility
+README.md text eol=crlf

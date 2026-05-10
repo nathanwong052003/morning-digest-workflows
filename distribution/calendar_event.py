@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import re
 from time import perf_counter
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from google.oauth2.credentials import Credentials
@@ -51,6 +52,35 @@ def _build_event_description(summary: DigestSummary, raw_data: RawDigestData, di
     )
 
 
+def _find_existing_event(
+    service: Any,
+    calendar_id: str,
+    digest_date: date,
+) -> str | None:
+    """Search for an existing Morning Digest event on the given date.
+
+    Returns the event ID if found, or None otherwise.
+    """
+    day_start = datetime(digest_date.year, digest_date.month, digest_date.day, tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+    events_result = (
+        service.events()
+        .list(
+            calendarId=calendar_id,
+            timeMin=day_start.isoformat(),
+            timeMax=day_end.isoformat(),
+            q="Morning Digest",
+            singleEvents=True,
+            fields="items(id)",
+        )
+        .execute()
+    )
+    items = events_result.get("items", [])
+    if items:
+        return items[0]["id"]
+    return None
+
+
 def create_digest_calendar_event(
     *,
     settings: Settings,
@@ -84,20 +114,41 @@ def create_digest_calendar_event(
     }
 
     service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
-    created = retry_call(
-        lambda: service.events()
-        .insert(
-            calendarId=settings.digest_calendar_id,
-            body=event_body,
-            sendUpdates="none",
+
+    existing_event_id = _find_existing_event(service, settings.digest_calendar_id, digest_date)
+
+    if existing_event_id:
+        result = retry_call(
+            lambda: service.events()
+            .update(
+                calendarId=settings.digest_calendar_id,
+                eventId=existing_event_id,
+                body=event_body,
+                sendUpdates="none",
+            )
+            .execute(),
+            attempts=3,
+            base_delay_seconds=1.0,
         )
-        .execute(),
-        attempts=3,
-        base_delay_seconds=1.0,
-    )
-    event_id = created.get("id", "")
+        event_id = result.get("id", "")
+        action = "updated"
+    else:
+        result = retry_call(
+            lambda: service.events()
+            .insert(
+                calendarId=settings.digest_calendar_id,
+                body=event_body,
+                sendUpdates="none",
+            )
+            .execute(),
+            attempts=3,
+            base_delay_seconds=1.0,
+        )
+        event_id = result.get("id", "")
+        action = "created"
+
     logger.info(
-        "calendar_event_created",
+        f"calendar_event_{action}",
         step="distribution_calendar",
         event_id=event_id,
         latency=perf_counter() - started,
