@@ -56,8 +56,6 @@ SOURCE_HOMEPAGES: dict[str, str] = {
     "BBC": "https://www.bbc.com",
     "Bloomberg": "https://www.bloomberg.com",
     "Channel NewsAsia": "https://www.channelnewsasia.com",
-    "CISA": "https://www.cisa.gov",
-    "CISA Advisories": "https://www.cisa.gov/news-events/cybersecurity-advisories",
     "Financial Times": "https://www.ft.com",
     "HK Free Press": "https://hongkongfp.com",
     "HKSAR Government": "https://www.info.gov.hk",
@@ -78,7 +76,6 @@ CATEGORY_RSS_FEEDS: dict[str, tuple[str, ...]] = {
     "TECHNOLOGY": (
         "https://news.google.com/rss/search?q=(technology+OR+ai+OR+cybersecurity)+when:2d&hl=en-US&gl=US&ceid=US:en",
         "https://news.google.com/rss/search?q=(technology+OR+ai+OR+cybersecurity)+when:2d+(source:Reuters+OR+source:AP+OR+source:Bloomberg+OR+source:BBC+OR+source:Financial+Times+OR+source:The+Verge+OR+source:Ars+Technica+OR+source:MIT+Technology+Review+OR+source:Wired+OR+source:IEEE+Spectrum)&hl=en-US&gl=US&ceid=US:en",
-        "https://www.cisa.gov/cybersecurity-advisories/all.xml",
     ),
     "SOUTHEAST ASIA": (
         "https://news.google.com/rss/search?q=(Southeast+Asia+OR+ASEAN+OR+Singapore+OR+Indonesia+OR+Malaysia+OR+Thailand+OR+Philippines+OR+Vietnam)+when:2d&hl=en-US&gl=US&ceid=US:en",
@@ -102,8 +99,6 @@ CATEGORY_ALLOWED_SOURCES: dict[str, tuple[str, ...]] = {
         "MIT Technology Review",
         "Wired",
         "IEEE Spectrum",
-        "CISA",
-        "CISA Advisories",
     ),
     "SOUTHEAST ASIA": (
         "Reuters",
@@ -144,7 +139,6 @@ CATEGORY_ALLOWED_DOMAINS: dict[str, tuple[str, ...]] = {
         "technologyreview.com",
         "wired.com",
         "spectrum.ieee.org",
-        "cisa.gov",
     ),
     "SOUTHEAST ASIA": (
         "reuters.com",

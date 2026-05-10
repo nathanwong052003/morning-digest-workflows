@@ -455,7 +455,7 @@ def _render_schedule(
 ) -> None:
     lines = [f"{event.start_local} - {event.end_local}: {event.title}" for event in raw_data.calendar[:12]] or summary.schedule
     if not lines:
-        story.append(Paragraph("• None", styles["list_item"]))
+        story.append(Paragraph("• Free!", styles["list_item"]))
         return
     for line in lines:
         body = _format_schedule_display(line, digest_date)
@@ -465,7 +465,7 @@ def _render_schedule(
 def _render_inbox(story: list, styles: dict[str, ParagraphStyle], summary: DigestSummary, raw_data: RawDigestData) -> None:
     lines = [f"{email.sender} - {email.subject}" for email in raw_data.emails[:10]] or summary.emails
     if not lines:
-        story.append(Paragraph("• None", styles["list_item"]))
+        story.append(Paragraph("• Free!", styles["list_item"]))
         return
     for line in lines:
         label = _inbox_label(line)
@@ -504,14 +504,14 @@ def _render_news_groups(
 def _schedule_items_html(summary: DigestSummary, raw_data: RawDigestData, digest_date: date) -> str:
     lines = [f"{event.start_local} - {event.end_local}: {event.title}" for event in raw_data.calendar[:12]] or summary.schedule
     if not lines:
-        return "<li>None</li>"
+        return "<li>Free!</li>"
     return "\n".join([f"<li><strong>{_escape(_format_schedule_display(line, digest_date))}</strong></li>" for line in lines])
 
 
 def _inbox_items_html(summary: DigestSummary, raw_data: RawDigestData) -> str:
     lines = [f"{email.sender} - {email.subject}" for email in raw_data.emails[:10]] or summary.emails
     if not lines:
-        return "<li>None</li>"
+        return "<li>Free!</li>"
     rows = []
     for line in lines:
         label = _inbox_label(line)
