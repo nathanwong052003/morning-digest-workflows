@@ -2,8 +2,8 @@ name: Morning Digest
 
 on:
   schedule:
-    # Run at 00:00 UTC daily = 08:00 HKT (Asia/Hong_Kong)
-    - cron: "0 0 * * *"
+    # Run at 23:30 UTC daily = 07:30 HKT (Asia/Hong_Kong)
+    - cron: "30 23 * * *"
   workflow_dispatch:
     inputs:
       mock_mode:
