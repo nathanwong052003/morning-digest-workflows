@@ -2,8 +2,24 @@ name: Morning Digest
 
 on:
   schedule:
+    # Run at 00:00 UTC daily = 08:00 HKT (Asia/Hong_Kong)
     - cron: "0 0 * * *"
   workflow_dispatch:
+    inputs:
+      mock_mode:
+        description: "Run without external API calls (Google + DeepSeek)"
+        required: false
+        type: boolean
+        default: false
+      debug:
+        description: "Enable debug-level logging"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-and-publish:
@@ -11,30 +27,63 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+
     env:
+      # --- Core runtime ---
       TIMEZONE_NAME: Asia/Hong_Kong
       OUTPUT_DIR: output
+      RUN_ID: ${{ github.run_id }}
+
+      # --- Google OAuth ---
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
       REFRESH_TOKEN: ${{ secrets.REFRESH_TOKEN }}
-      DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
-      DIGEST_CALENDAR_ID: ${{ secrets.DIGEST_CALENDAR_ID }}
+
+      # --- Gmail ---
+      GMAIL_USER_ID: me
       GMAIL_LABEL_IDS: ${{ secrets.GMAIL_LABEL_IDS }}
       GMAIL_KEYWORDS: ${{ secrets.GMAIL_KEYWORDS }}
+      GMAIL_MAX_THREADS: "20"
+
+      # --- News ---
       NEWS_RSS_URLS: ${{ secrets.NEWS_RSS_URLS }}
       NEWS_API_URLS_JSON: ${{ secrets.NEWS_API_URLS_JSON }}
+      NEWS_CACHE_PATH: /tmp/morning_digest_news_cache.json
+      NEWS_CACHE_TTL_SECONDS: "43200"
+      MAX_NEWS_ITEMS: "30"
+
+      # --- Distribution ---
+      DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+      DIGEST_CALENDAR_ID: ${{ secrets.DIGEST_CALENDAR_ID }}
+      DIGEST_EVENT_HOUR: "8"
+      DIGEST_EVENT_MINUTE: "0"
+
+      # --- DeepSeek AI ---
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      DEEPSEEK_BASE_URL: https://api.deepseek.com
       DEEPSEEK_MODEL: deepseek-chat
+      DEEPSEEK_TEMPERATURE: "0.2"
+      DEEPSEEK_MAX_TOKENS: "1500"
+      AI_RETRY_ATTEMPTS: "3"
+      DEEPSEEK_AUDIT_LOG_PATH: output/deepseek_requests_${{ github.run_id }}.jsonl
+
+      # --- Cost controls ---
+      TOKEN_SPEND_PATH: /tmp/morning_digest_token_spend.json
       DAILY_TOKEN_WARN_THRESHOLD: "50000"
 
+      # --- Mode ---
+      MOCK_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mock_mode || 'false' }}
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         run: |
@@ -42,7 +91,22 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run digest pipeline
+        id: digest
         run: python main.py
+        continue-on-error: true
+
+      - name: Check audit log
+        id: audit_check
+        run: |
+          AUDIT_FILE="output/deepseek_requests_${{ github.run_id }}.jsonl"
+          if [ -f "$AUDIT_FILE" ]; then
+            LINE_COUNT=$(wc -l < "$AUDIT_FILE")
+            echo "audit_lines=$LINE_COUNT" >> $GITHUB_OUTPUT
+            echo "Audit log found with $LINE_COUNT entries"
+          else
+            echo "audit_lines=0" >> $GITHUB_OUTPUT
+            echo "No audit log file found"
+          fi
 
       - name: Upload generated PDF artifact
         if: always()
@@ -51,3 +115,38 @@ jobs:
           name: morning-digest-pdf
           path: output/*.pdf
           if-no-files-found: ignore
+
+      - name: Upload DeepSeek audit log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-audit-log
+          path: output/deepseek_requests_*.jsonl
+          if-no-files-found: ignore
+
+      - name: Upload token spend log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: token-spend-log
+          path: /tmp/morning_digest_token_spend.json
+          if-no-files-found: ignore
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "## Morning Digest Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Run ID** | ${{ github.run_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Trigger** | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Mock Mode** | ${{ env.MOCK_MODE }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Digest Exit Code** | ${{ steps.digest.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Audit Log Entries** | ${{ steps.audit_check.outputs.audit_lines }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if pipeline errored
+        if: steps.digest.outcome == 'failure'
+        run: |
+          echo "::error::Digest pipeline failed. Check the logs above for details."
+          exit 1

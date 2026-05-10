@@ -67,7 +67,7 @@ def run(settings: Settings) -> int:
     digest_date = now_local.date()
     output_dir = Path(settings.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"digest_{digest_date.strftime('%Y%m%d')}.pdf"
+    output_path = output_dir / f"Morning Digest — {digest_date.strftime('%B')} {digest_date.day}, {digest_date.year}.pdf"
 
     credentials = None
     if not settings.mock_mode:

@@ -73,6 +73,7 @@ This validates collectors → AI fallback behavior → PDF generation in a safe 
 - `DEEPSEEK_API_KEY`
 - Optional: `DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`)
 - Optional: `DEEPSEEK_MODEL` (default `deepseek-chat`)
+- Optional: `DEEPSEEK_AUDIT_LOG_PATH` (default `output/deepseek_requests_<RUN_ID>.jsonl`)
 
 ### Runtime/cost controls
 - `TIMEZONE_NAME` (default `Asia/Hong_Kong`)
@@ -108,7 +109,9 @@ This validates collectors → AI fallback behavior → PDF generation in a safe 
 Workflow: `.github/workflows/digest.yml`
 - Runs daily at `0 0 * * *` (UTC), which is **08:00 UTC+8**.
 - Supports manual trigger (`workflow_dispatch`).
+- Manual trigger supports `mock_mode=true` to run without external APIs.
 - Uploads generated PDF as an artifact each run.
+- Uploads DeepSeek request/response audit logs as `deepseek-audit-log` artifact.
 
 ## Reliability and observability
 

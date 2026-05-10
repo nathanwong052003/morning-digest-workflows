@@ -35,6 +35,10 @@ class DeepSeekClient:
             base_url=settings.deepseek_base_url,
         )
         self._daily_tokens = self._read_daily_tokens()
+        if settings.deepseek_audit_log_path.strip():
+            self._audit_log_path = Path(settings.deepseek_audit_log_path)
+        else:
+            self._audit_log_path = Path(settings.output_dir) / f"deepseek_requests_{settings.run_id}.jsonl"
 
     def _token_key(self) -> str:
         return datetime.now().strftime("%Y-%m-%d")
@@ -64,18 +68,95 @@ class DeepSeekClient:
 
     def _call_json(self, *, step: str, user_payload: dict[str, Any]) -> dict[str, Any]:
         started = perf_counter()
+        attempt_number = 0
 
         def _request() -> Any:
-            return self.client.chat.completions.create(
-                model=self.settings.deepseek_model,
-                temperature=self.settings.deepseek_temperature,
-                max_tokens=self.settings.deepseek_max_tokens,
-                response_format={"type": "json_object"},
-                messages=[
+            nonlocal attempt_number
+            attempt_number += 1
+            request_payload = {
+                "model": self.settings.deepseek_model,
+                "temperature": self.settings.deepseek_temperature,
+                "max_tokens": self.settings.deepseek_max_tokens,
+                "response_format": {"type": "json_object"},
+                "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
                 ],
+            }
+            self.logger.info(
+                "deepseek_request",
+                step=step,
+                attempt=attempt_number,
+                model=request_payload["model"],
+                temperature=request_payload["temperature"],
+                max_tokens=request_payload["max_tokens"],
+                user_payload_keys=list(user_payload.keys()),
+                user_payload_sizes={
+                    k: len(json.dumps(v, ensure_ascii=True))
+                    for k, v in user_payload.items()
+                },
             )
+            self._append_audit_event(
+                event="deepseek_request",
+                step=step,
+                attempt=attempt_number,
+                request=request_payload,
+            )
+            try:
+                response = self.client.chat.completions.create(**request_payload)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(
+                    "deepseek_request_error",
+                    step=step,
+                    attempt=attempt_number,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+                self._append_audit_event(
+                    event="deepseek_request_error",
+                    step=step,
+                    attempt=attempt_number,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+                raise
+            usage = getattr(response, "usage", None)
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+            total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
+            content = response.choices[0].message.content if response.choices else None
+            self.logger.info(
+                "deepseek_response",
+                step=step,
+                attempt=attempt_number,
+                response_id=getattr(response, "id", ""),
+                model=request_payload["model"],
+                finish_reason=(
+                    response.choices[0].finish_reason
+                    if response.choices and len(response.choices) > 0
+                    else ""
+                ),
+                input_tokens=prompt_tokens,
+                output_tokens=completion_tokens,
+                tokens_used=total_tokens,
+                response_preview=(content[:500] + "..." if content and len(content) > 500 else (content or "")),
+            )
+            self._append_audit_event(
+                event="deepseek_response",
+                step=step,
+                attempt=attempt_number,
+                response_id=getattr(response, "id", ""),
+                finish_reason=(
+                    response.choices[0].finish_reason
+                    if response.choices and len(response.choices) > 0
+                    else ""
+                ),
+                input_tokens=prompt_tokens,
+                output_tokens=completion_tokens,
+                tokens_used=total_tokens,
+                response_content=content or "",
+            )
+            return response
 
         try:
             response = retry_call(
@@ -93,6 +174,12 @@ class DeepSeekClient:
         try:
             parsed = self._parse_json_payload(content)
         except json.JSONDecodeError as exc:
+            self._append_audit_event(
+                event="deepseek_response_parse_error",
+                step=step,
+                response_content=content,
+                error=str(exc),
+            )
             raise DeepSeekError(f"DeepSeek returned invalid JSON at step '{step}'") from exc
         payload = self._coerce_payload(parsed=parsed, step=step)
 
@@ -112,6 +199,18 @@ class DeepSeekClient:
             daily_tokens=self._daily_tokens,
         )
         return payload
+
+    def _append_audit_event(self, *, event: str, step: str, **kwargs: Any) -> None:
+        self._audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, Any] = {
+            "timestamp": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "run_id": self.settings.run_id,
+            "event": event,
+            "step": step,
+        }
+        payload.update(kwargs)
+        with self._audit_log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=True, default=str) + "\n")
 
     @staticmethod
     def _parse_json_payload(content: str) -> Any:
@@ -214,8 +313,9 @@ class DeepSeekClient:
                 "Tags for TECHNOLOGY: AI, Hardware, Software, Cybersecurity, Science, Robotics, Space. "
                 "Tags for SOUTHEAST ASIA: Finance, Policy, Startups, Society, Security, Trade, Energy, Environment. "
                 "Tags for HONG KONG: Finance, Society, Policy, Business, Security, Culture, Education. "
-                "summary must be 1-2 concise complete sentences. "
-                "Never end mid-sentence. Do not include ellipsis."
+                "summary must be 2-3 detailed complete sentences providing substantive information. "
+                "Never end mid-sentence. Do not include ellipsis. "
+                "Do NOT mention the news source or publication name in the summary text."
             ),
             "news": [
                 {
@@ -308,9 +408,10 @@ class DeepSeekClient:
             return ranked_news
         payload = {
             "task": (
-                "Rewrite each item into a concise 1-2 sentence summary using title/source/snippet context. "
+                "Rewrite each item into a detailed 2-3 sentence summary using title/source/snippet context. "
                 "Return JSON object with key 'summaries' containing list of {item_id,summary}. "
-                "Summary must be complete sentences, not ending mid-sentence, and must not include ellipsis."
+                "Summary must be complete sentences, not ending mid-sentence, and must not include ellipsis. "
+                "Do NOT mention the news source or publication name in the summary text."
             ),
             "items": [
                 {

@@ -6,7 +6,7 @@ import re
 from datetime import date, datetime, time
 from pathlib import Path
 from time import perf_counter
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -80,7 +80,7 @@ def _styles() -> dict[str, ParagraphStyle]:
             textColor=colors.HexColor("#222222"),
             leftIndent=13,
             bulletIndent=2,
-            spaceAfter=4,
+            spaceAfter=6,
         ),
         "pill_line": ParagraphStyle(
             "pill_line",
@@ -116,7 +116,7 @@ def _styles() -> dict[str, ParagraphStyle]:
             fontSize=8,
             leading=10,
             textColor=colors.HexColor("#AAAAAA"),
-            spaceAfter=14,
+            spaceAfter=18,
         ),
         "muted_small": ParagraphStyle(
             "muted_small",
@@ -155,6 +155,44 @@ def _clean_display_text(text: str) -> str:
         if last_end >= 0:
             cleaned = cleaned[: last_end + 1].strip()
     return cleaned
+
+
+def _normalize_news_url(raw_url: str) -> str:
+    stripped = (raw_url or "").strip()
+    if not stripped:
+        return ""
+    parts = urlsplit(stripped)
+    query_pairs = []
+    for key, value in parse_qsl(parts.query, keep_blank_values=False):
+        lowered = key.lower()
+        if lowered.startswith("utm_") or lowered in {
+            "gclid",
+            "fbclid",
+            "igshid",
+            "mc_cid",
+            "mc_eid",
+            "ref",
+            "ref_src",
+        }:
+            continue
+        query_pairs.append((key, value))
+    query_pairs.sort(key=lambda row: row[0].lower())
+    normalized = parts._replace(
+        scheme=parts.scheme.lower(),
+        netloc=parts.netloc.lower(),
+        path=(parts.path.rstrip("/") or "/"),
+        query=urlencode(query_pairs, doseq=True),
+        fragment="",
+    )
+    return urlunsplit(normalized)
+
+
+def _news_identity(*, title: str, url: str) -> str:
+    normalized_url = _normalize_news_url(url)
+    if normalized_url:
+        return f"url:{normalized_url}"
+    title_key = re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+    return f"title:{title_key}"
 
 
 def _parse_schedule_line(line: str) -> tuple[str, str]:
@@ -228,12 +266,22 @@ def _split_inbox_line(line: str) -> tuple[str, str]:
 
 def _inbox_label(text: str) -> str:
     lowered = text.lower()
-    if any(token in lowered for token in ("tax", "ipo", "market", "finance", "gdp", "bank", "money")):
+    if any(token in lowered for token in ("ai", "openai", "anthropic", "machine learning", "llm", "deepseek")):
+        return "AI"
+    if any(token in lowered for token in ("cyber", "security alert", "breach", "vulnerability", "malware", "ransomware")):
+        return "CYBERSECURITY"
+    if any(token in lowered for token in ("tax", "ipo", "market", "finance", "gdp", "bank", "money", "hsbc", "payment", "debit")):
         return "FINANCE"
-    if any(token in lowered for token in ("briefing", "china", "policy", "geopolitic", "south china morning post")):
+    if any(token in lowered for token in ("briefing", "china", "policy", "geopolitic", "south china morning post", "scmp")):
         return "BRIEFING"
-    if any(token in lowered for token in ("ai", "openai", "anthropic", "tech", "software", "cloud", "developer")):
+    if any(token in lowered for token in ("tech", "software", "cloud", "developer", "google", "microsoft", "apple", "github")):
         return "TECH"
+    if any(token in lowered for token in ("space", "nasa", "spacex", "rocket", "satellite")):
+        return "SPACE"
+    if any(token in lowered for token in ("job", "hiring", "career", "glassdoor", "recruit")):
+        return "BUSINESS"
+    if any(token in lowered for token in ("order", "delivery", "meal", "food")):
+        return "SOCIETY"
     return "BRIEFING"
 
 
@@ -284,45 +332,69 @@ def _split_news(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[Ran
             if inferred in {"SOUTHEAST ASIA", "HONG KONG"}:
                 item.category = inferred
 
-    tech = [item for item in ranked if item.category == "TECHNOLOGY"]
-    sea = [item for item in ranked if item.category == "SOUTHEAST ASIA"]
-    hk = [item for item in ranked if item.category == "HONG KONG"]
+    buckets: dict[str, list[RankedNewsItem]] = {
+        "TECHNOLOGY": [],
+        "SOUTHEAST ASIA": [],
+        "HONG KONG": [],
+    }
+    seen_keys: set[str] = set()
 
-    used_urls = {str(item.url) for item in ranked}
+    def _add_to_bucket(category: str, row: RankedNewsItem) -> bool:
+        if category not in buckets or len(buckets[category]) >= 3:
+            return False
+        key = _news_identity(title=row.title, url=str(row.url))
+        if key in seen_keys:
+            return False
+        seen_keys.add(key)
+        buckets[category].append(row)
+        return True
+
+    for row in ranked:
+        category = row.category if row.category in buckets else _infer_category(row)
+        _add_to_bucket(category, row)
+
     for item in raw_data.news:
-        if str(item.url) in used_urls:
-            continue
         inferred = _infer_category(item)
-        ranked_item = _to_ranked(item, inferred)
-        if inferred == "SOUTHEAST ASIA" and len(sea) < 3:
-            sea.append(ranked_item)
-            used_urls.add(str(item.url))
-        elif inferred == "HONG KONG" and len(hk) < 3:
-            hk.append(ranked_item)
-            used_urls.add(str(item.url))
-        elif inferred == "TECHNOLOGY" and len(tech) < 3:
-            tech.append(ranked_item)
-            used_urls.add(str(item.url))
+        _add_to_bucket(inferred, _to_ranked(item, inferred))
 
-    if not tech:
-        tech = [_to_ranked(item, "TECHNOLOGY") for item in raw_data.news[:3]]
-    if not sea:
-        sea = [_to_ranked(item, "SOUTHEAST ASIA") for item in raw_data.news[3:6]]
-    if not hk:
-        hk = [_to_ranked(item, "HONG KONG") for item in raw_data.news[6:9]]
+    # Ensure each section remains populated while preserving global dedupe.
+    for category in ("TECHNOLOGY", "SOUTHEAST ASIA", "HONG KONG"):
+        if len(buckets[category]) >= 3:
+            continue
+        for item in raw_data.news:
+            if _add_to_bucket(category, _to_ranked(item, category)) and len(buckets[category]) >= 3:
+                break
 
-    return tech[:3], sea[:3], hk[:3]
+    return (
+        buckets["TECHNOLOGY"][:3],
+        buckets["SOUTHEAST ASIA"][:3],
+        buckets["HONG KONG"][:3],
+    )
 
 
 def _label_colors(label: str) -> tuple[str, str]:
     palette = {
+        "NEWS": ("#DBEAFE", "#1E40AF"),
         "TECH": ("#D1FAE5", "#065F46"),
-        "BRIEFING": ("#DBEAFE", "#1E40AF"),
-        "FINANCE": ("#FEF3C7", "#92400E"),
-        "CYBERSECURITY": ("#FEE2E2", "#991B1B"),
         "AI": ("#EDE9FE", "#5B21B6"),
+        "CYBERSECURITY": ("#FEE2E2", "#991B1B"),
+        "FINANCE": ("#FEF3C7", "#92400E"),
+        "BRIEFING": ("#E0E7FF", "#3730A3"),
         "TRADE": ("#FEF9C3", "#713F12"),
         "BUSINESS": ("#F3F4F6", "#1F2937"),
+        "SOCIETY": ("#FCE7F3", "#9D174D"),
+        "POLICY": ("#E0F2FE", "#0369A1"),
+        "SECURITY": ("#FEE2E2", "#991B1B"),
+        "SCIENCE": ("#D1FAE5", "#065F46"),
+        "HARDWARE": ("#F3E8FF", "#6B21A8"),
+        "SOFTWARE": ("#D1FAE5", "#065F46"),
+        "ROBOTICS": ("#F0FDF4", "#166534"),
+        "SPACE": ("#F0F9FF", "#0C4A6E"),
+        "STARTUPS": ("#FDF4FF", "#86198F"),
+        "ENERGY": ("#FFF7ED", "#9A3412"),
+        "ENVIRONMENT": ("#ECFDF5", "#065F46"),
+        "CULTURE": ("#FFF1F2", "#9F1239"),
+        "EDUCATION": ("#F0FDF4", "#166534"),
     }
     return palette.get(label.upper(), ("#F3F4F6", "#1F2937"))
 
@@ -362,7 +434,7 @@ def _add_section_header(story: list, styles: dict[str, ParagraphStyle], heading:
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F4F4")),
-                ("LINEBEFORE", (0, 0), (0, 0), 3, colors.HexColor("#CCCCCC")),
+                ("LINEBEFORE", (0, 0), (0, 0), 2, colors.HexColor("#CCCCCC")),
                 ("LEFTPADDING", (0, 0), (-1, -1), 8),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 8),
                 ("TOPPADDING", (0, 0), (-1, -1), 4),
@@ -391,19 +463,15 @@ def _render_schedule(
 
 
 def _render_inbox(story: list, styles: dict[str, ParagraphStyle], summary: DigestSummary, raw_data: RawDigestData) -> None:
-    short_label = {
-        "FINANCE": "FIN",
-        "BRIEFING": "NEWS",
-        "TECH": "TECH",
-    }
     lines = [f"{email.sender} - {email.subject}" for email in raw_data.emails[:10]] or summary.emails
     if not lines:
         story.append(Paragraph("• None", styles["list_item"]))
         return
     for line in lines:
-        label = short_label.get(_inbox_label(line), "NEWS")
+        label = _inbox_label(line)
         sender, summary_text = _split_inbox_line(line)
-        first_line = f"<b>[{_escape(label)}] {_escape(sender)}</b>"
+        pill = _pill_html(label)
+        first_line = f"{pill}&nbsp;<b>{_escape(sender)}</b>"
         body = first_line if not summary_text else f"{first_line}<br/>{_escape(summary_text)}"
         story.append(Paragraph(body, styles["list_item"], bulletText="•"))
 
@@ -421,22 +489,16 @@ def _render_news_groups(
         return
     for row in items:
         safe_url = _escape(str(row.url))
-        story.append(Paragraph(_pill_html(row.tag.strip() or "News"), styles["pill_line"]))
+        tag = row.tag.strip() or "News"
         story.append(
             Paragraph(
-                f'<link href="{safe_url}"><u><b>{_escape(row.title)}</b></u></link>',
+                f'{_pill_html(tag)}&nbsp;<link href="{safe_url}"><u><b>{_escape(row.title)}</b></u></link>',
                 styles["article_title"],
             )
         )
         body = _clean_display_text((row.ai_summary or row.snippet or "").strip())
         if body:
             story.append(Paragraph(_escape(body), styles["article_body"]))
-        story.append(
-            Paragraph(
-                f"<i><link href=\"{safe_url}\">{_escape(row.source)}</link></i>",
-                styles["article_source"],
-            )
-        )
 
 
 def _schedule_items_html(summary: DigestSummary, raw_data: RawDigestData, digest_date: date) -> str:
@@ -447,19 +509,20 @@ def _schedule_items_html(summary: DigestSummary, raw_data: RawDigestData, digest
 
 
 def _inbox_items_html(summary: DigestSummary, raw_data: RawDigestData) -> str:
-    short_label = {
-        "FINANCE": "FIN",
-        "BRIEFING": "NEWS",
-        "TECH": "TECH",
-    }
     lines = [f"{email.sender} - {email.subject}" for email in raw_data.emails[:10]] or summary.emails
     if not lines:
         return "<li>None</li>"
     rows = []
     for line in lines:
-        label = short_label.get(_inbox_label(line), "NEWS")
+        label = _inbox_label(line)
         sender, summary_text = _split_inbox_line(line)
-        first_line = f'<div class="inbox-primary"><span class="inbox-tag">[{_escape(label)}]</span> {_escape(sender)}</div>'
+        tag_bg, tag_fg = _label_colors(label)
+        first_line = (
+            f'<div class="inbox-primary">'
+            f'<span class="inbox-tag" style="background-color:{tag_bg};color:{tag_fg};">{_escape(label)}</span>'
+            f' {_escape(sender)}'
+            f'</div>'
+        )
         second_line = f'<div class="inbox-secondary">{_escape(summary_text)}</div>' if summary_text else ""
         rows.append(f"<li>{first_line}{second_line}</li>")
     return "\n".join(rows)
@@ -471,17 +534,16 @@ def _news_blocks_html(items: list[RankedNewsItem]) -> str:
     blocks = []
     for row in items:
         safe_url = _escape(str(row.url))
-        host = urlparse(str(row.url)).netloc.lower()
-        if host.startswith("www."):
-            host = host[4:]
         tag = row.tag.strip() or "News"
+        tag_bg, tag_fg = _label_colors(tag)
         body = _clean_display_text((row.ai_summary or row.snippet or "").strip())
         blocks.append(
             "<div class=\"item\">\n"
-            f"<div class=\"tag\">{_escape(tag)}</div>\n"
-            f"<a class=\"headline headline-link\" href=\"{safe_url}\">{_escape(row.title)}</a>\n"
+            f"<div class=\"headline-row\">"
+            f"<span class=\"tag-colored\" style=\"background-color:{tag_bg};color:{tag_fg};\">{_escape(tag)}</span>"
+            f"<a class=\"headline headline-link\" href=\"{safe_url}\">{_escape(row.title)}</a>"
+            f"</div>\n"
             f"<p class=\"body-text\">{_escape(body)}</p>\n"
-            f"<div class=\"source\">{_escape(row.source)}{f' · {_escape(host)}' if host else ''}</div>\n"
             "</div>"
         )
     return "\n".join(blocks)
@@ -525,8 +587,8 @@ def _generate_pdf_with_reportlab(
         title="Morning Digest",
         author="Morning Digest Automation",
         topMargin=15 * mm,
-        leftMargin=15 * mm,
-        rightMargin=15 * mm,
+        leftMargin=12 * mm,
+        rightMargin=12 * mm,
         bottomMargin=15 * mm,
     )
     styles = _styles()
@@ -550,7 +612,7 @@ def _generate_pdf_with_reportlab(
     )
     story.append(header)
     story.append(Paragraph(f"{digest_date.strftime('%A')} · Hong Kong Time", styles["subtitle"]))
-    _append_rule(story, thickness=2, color_hex="#000000", before=2, after=10)
+    _append_rule(story, thickness=3, color_hex="#000000", before=2, after=10)
 
     if warning_banner:
         story.append(Paragraph(_escape(warning_banner), styles["warning"]))

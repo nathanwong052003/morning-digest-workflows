@@ -8,7 +8,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlsplit, urlunsplit
 
 import feedparser
 import requests
@@ -47,6 +47,31 @@ SOURCE_ALIASES: dict[str, str] = {
     "the verge": "The Verge",
     "wall street journal": "Wall Street Journal",
     "wsj": "Wall Street Journal",
+}
+
+SOURCE_HOMEPAGES: dict[str, str] = {
+    "AP": "https://apnews.com",
+    "Ars Technica": "https://arstechnica.com",
+    "Bangkok Post": "https://www.bangkokpost.com",
+    "BBC": "https://www.bbc.com",
+    "Bloomberg": "https://www.bloomberg.com",
+    "Channel NewsAsia": "https://www.channelnewsasia.com",
+    "CISA": "https://www.cisa.gov",
+    "CISA Advisories": "https://www.cisa.gov/news-events/cybersecurity-advisories",
+    "Financial Times": "https://www.ft.com",
+    "HK Free Press": "https://hongkongfp.com",
+    "HKSAR Government": "https://www.info.gov.hk",
+    "IEEE Spectrum": "https://spectrum.ieee.org",
+    "Jakarta Post": "https://www.thejakartapost.com",
+    "Nikkei Asia": "https://asia.nikkei.com",
+    "Philippine Star": "https://www.philstar.com",
+    "Reuters": "https://www.reuters.com",
+    "RTHK": "https://news.rthk.hk",
+    "South China Morning Post": "https://www.scmp.com",
+    "The Straits Times": "https://www.straitstimes.com",
+    "The Verge": "https://www.theverge.com",
+    "Wall Street Journal": "https://www.wsj.com",
+    "Wired": "https://www.wired.com",
 }
 
 CATEGORY_RSS_FEEDS: dict[str, tuple[str, ...]] = {
@@ -191,6 +216,97 @@ def _canonical_source(value: str) -> str:
     return raw
 
 
+def _normalize_news_url(raw_url: str) -> str:
+    stripped = (raw_url or "").strip()
+    if not stripped:
+        return ""
+    parts = urlsplit(stripped)
+    query_pairs = []
+    for key, value in parse_qsl(parts.query, keep_blank_values=False):
+        lowered = key.lower()
+        if lowered.startswith("utm_") or lowered in {
+            "gclid",
+            "fbclid",
+            "igshid",
+            "mc_cid",
+            "mc_eid",
+            "ref",
+            "ref_src",
+        }:
+            continue
+        query_pairs.append((key, value))
+    query_pairs.sort(key=lambda row: row[0].lower())
+    normalized = parts._replace(
+        scheme=parts.scheme.lower(),
+        netloc=parts.netloc.lower(),
+        path=(parts.path.rstrip("/") or "/"),
+        query=urlencode(query_pairs, doseq=True),
+        fragment="",
+    )
+    return urlunsplit(normalized)
+
+
+def _is_google_news_url(raw_url: str) -> bool:
+    host = urlparse((raw_url or "").strip()).netloc.lower()
+    return host == "news.google.com" or host.endswith(".news.google.com")
+
+
+def _extract_direct_url_candidate(raw_url: str) -> str:
+    value = (raw_url or "").strip()
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    if parsed.scheme in {"http", "https"} and not _is_google_news_url(value):
+        return value
+    query = parse_qs(parsed.query)
+    for key in ("url", "u", "q"):
+        first = next(iter(query.get(key, [])), "").strip()
+        if not first:
+            continue
+        decoded = unquote(first)
+        candidate = decoded if decoded.startswith(("http://", "https://")) else first
+        if candidate.startswith(("http://", "https://")) and not _is_google_news_url(candidate):
+            return candidate
+    return ""
+
+
+def _extract_summary_links(entry: dict[str, Any]) -> list[str]:
+    summary = str(entry.get("summary", "")).strip()
+    if not summary:
+        return []
+    links = re.findall(r'href=[\'"]([^\'"]+)[\'"]', summary, flags=re.IGNORECASE)
+    return [link.strip() for link in links if link.strip()]
+
+
+def _resolve_source_url(entry: dict[str, Any], raw_url: str) -> str:
+    candidates: list[str] = []
+    candidates.append(raw_url)
+    source_obj = entry.get("source")
+    if isinstance(source_obj, dict):
+        source_href = str(source_obj.get("href", "")).strip()
+        if source_href:
+            candidates.append(source_href)
+    raw_links = entry.get("links")
+    if isinstance(raw_links, list):
+        for link_row in raw_links:
+            if isinstance(link_row, dict):
+                href = str(link_row.get("href", "")).strip()
+                if href:
+                    candidates.append(href)
+    candidates.extend(_extract_summary_links(entry))
+
+    for candidate in candidates:
+        direct = _extract_direct_url_candidate(candidate)
+        if direct:
+            return direct
+    if _is_google_news_url(raw_url):
+        source_name = _extract_source(entry, raw_url)
+        homepage = SOURCE_HOMEPAGES.get(source_name)
+        if homepage:
+            return homepage
+    return raw_url
+
+
 def _extract_source(entry: dict[str, Any], url: str) -> str:
     raw_source = ""
     source_obj = entry.get("source")
@@ -247,11 +363,12 @@ def _from_rss_feed(url: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for entry in parsed.entries:
         entry_link = str(entry.get("link", "")).strip()
+        resolved_link = _resolve_source_url(entry, entry_link)
         rows.append(
             {
                 "title": entry.get("title", "(Untitled)"),
-                "url": entry_link,
-                "source": _extract_source(entry, entry_link),
+                "url": resolved_link,
+                "source": _extract_source(entry, resolved_link),
                 "published_at": entry.get("published") or entry.get("updated"),
                 "snippet": entry.get("summary", ""),
             }
@@ -296,12 +413,22 @@ def _collect_category_rows(category: str) -> list[dict[str, Any]]:
 
 def _normalize(rows: list[dict[str, Any]]) -> list[NewsItem]:
     items: list[NewsItem] = []
-    seen: set[str] = set()
+    seen_urls: set[str] = set()
+    seen_titles: set[str] = set()
     for row in rows:
         url = str(row.get("url", "")).strip()
-        if not url or url in seen:
+        normalized_url = _normalize_news_url(url)
+        title_key = re.sub(r"[^a-z0-9]+", " ", str(row.get("title", "")).lower()).strip()
+        if not url:
             continue
-        seen.add(url)
+        if normalized_url and normalized_url in seen_urls:
+            continue
+        if title_key and title_key in seen_titles:
+            continue
+        if normalized_url:
+            seen_urls.add(normalized_url)
+        if title_key:
+            seen_titles.add(title_key)
         published_at = _parse_published(row.get("published_at"))
         try:
             item = NewsItem(

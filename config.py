@@ -80,6 +80,7 @@ class Settings:
     deepseek_temperature: float
     deepseek_max_tokens: int
     ai_retry_attempts: int
+    deepseek_audit_log_path: str
 
     token_spend_path: str
     daily_token_warn_threshold: int
@@ -134,6 +135,7 @@ def load_settings() -> Settings:
         deepseek_temperature=float(os.getenv("DEEPSEEK_TEMPERATURE", "0.2")),
         deepseek_max_tokens=int(os.getenv("DEEPSEEK_MAX_TOKENS", "1500")),
         ai_retry_attempts=int(os.getenv("AI_RETRY_ATTEMPTS", "3")),
+        deepseek_audit_log_path=os.getenv("DEEPSEEK_AUDIT_LOG_PATH", ""),
         token_spend_path=os.getenv("TOKEN_SPEND_PATH", "/tmp/morning_digest_token_spend.json"),
         daily_token_warn_threshold=int(os.getenv("DAILY_TOKEN_WARN_THRESHOLD", "50000")),
         output_dir=os.getenv("OUTPUT_DIR", "output"),
