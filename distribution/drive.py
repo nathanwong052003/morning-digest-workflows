@@ -57,27 +57,60 @@ def upload_pdf_to_drive(
     drive_file_name = settings.drive_file_name or pdf_path.name
     media = MediaFileUpload(str(pdf_path), mimetype="application/pdf", resumable=False)
 
-    existing_file_id = _find_existing_file(service, settings.drive_folder_id, drive_file_name)
+    if settings.drive_overwrite_mode:
+        # Overwrite mode: use the date-stamped filename so each day gets its own file,
+        # but re-runs on the same day overwrite the existing one.
+        drive_file_name = pdf_path.name
+        existing_file_id = _find_existing_file(service, settings.drive_folder_id, drive_file_name)
 
-    if existing_file_id:
-        # Update the existing file in place
-        updated = retry_call(
-            lambda: service.files()
-            .update(
-                fileId=existing_file_id,
-                media_body=media,
-                fields="id,webViewLink",
-                supportsAllDrives=True,
+        if existing_file_id:
+            updated = retry_call(
+                lambda: service.files()
+                .update(
+                    fileId=existing_file_id,
+                    media_body=media,
+                    fields="id,webViewLink",
+                    supportsAllDrives=True,
+                )
+                .execute(),
+                attempts=3,
+                base_delay_seconds=1.0,
             )
-            .execute(),
-            attempts=3,
-            base_delay_seconds=1.0,
-        )
-        file_id = updated.get("id")
-        action = "updated"
+            file_id = updated.get("id")
+            action = "updated"
+        else:
+            # No existing file found — create a new one
+            metadata = {"name": drive_file_name, "parents": [settings.drive_folder_id]}
+            created = retry_call(
+                lambda: service.files()
+                .create(
+                    body=metadata,
+                    media_body=media,
+                    fields="id,webViewLink",
+                    supportsAllDrives=True,
+                )
+                .execute(),
+                attempts=3,
+                base_delay_seconds=1.0,
+            )
+            file_id = created.get("id")
+            action = "created"
+
+            retry_call(
+                lambda: service.permissions()
+                .create(
+                    fileId=file_id,
+                    body={"type": "anyone", "role": "reader"},
+                    fields="id",
+                    supportsAllDrives=True,
+                )
+                .execute(),
+                attempts=3,
+                base_delay_seconds=1.0,
+            )
     else:
-        # Create a new file
-        metadata = {"name": drive_file_name, "parents": [settings.drive_folder_id]}
+        # Historical mode: always create a new file with a unique name
+        metadata = {"name": pdf_path.name, "parents": [settings.drive_folder_id]}
         created = retry_call(
             lambda: service.files()
             .create(
@@ -93,7 +126,6 @@ def upload_pdf_to_drive(
         file_id = created.get("id")
         action = "created"
 
-        # Make publicly readable (only needed for new files)
         retry_call(
             lambda: service.permissions()
             .create(

@@ -150,6 +150,11 @@ def collect_gmail_threads(
         snippet = truncate_text(detail.get("snippet", ""), limit=500)
         labels = first.get("labelIds", [])
 
+        # Only include threads that are in INBOX or marked IMPORTANT
+        label_set = {label.upper() for label in labels}
+        if "INBOX" not in label_set and "IMPORTANT" not in label_set:
+            continue
+
         # Skip threads with excluded labels (e.g. CATEGORY_PROMOTIONS)
         if _is_excluded(labels, settings.gmail_excluded_labels):
             continue

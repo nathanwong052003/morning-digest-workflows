@@ -101,9 +101,9 @@
 
 **Required changes:**
 
-- [ ] In [`distribution/drive.py`](distribution/drive.py), modify `upload_pdf_to_drive()` to first search for an existing file with a consistent name (e.g., `Morning Digest - Latest.pdf`) in the configured `DRIVE_FOLDER_ID`, and delete or update it instead of always creating a new file.
-- [ ] Use a fixed/consistent filename (e.g., `Morning Digest - Latest.pdf`) and overwrite it on each run, keeping only a single "latest" file in Drive.
-- [ ] In [`distribution/calendar_event.py`](distribution/calendar_event.py), modify `create_digest_calendar_event()` to search for an existing digest event for today's date and update it (via `events().update()`) instead of always inserting a new one.
-- [ ] Add a config option (e.g., `DRIVE_FILE_NAME` or `DRIVE_OVERWRITE_MODE`) to control this behavior — whether to always replace or keep historical files.
-- [ ] Update [`.env.example`](.env.example) with any new config variables.
-- [ ] Update [`config.py`](config.py) `Settings` dataclass and `load_settings()` with any new config fields.
+- [x] In [`distribution/drive.py`](distribution/drive.py), modify `upload_pdf_to_drive()` to first search for an existing file with a consistent name (e.g., `Morning Digest - Latest.pdf`) in the configured `DRIVE_FOLDER_ID`, and delete or update it instead of always creating a new file.
+- [x] Use a fixed/consistent filename (e.g., `Morning Digest - Latest.pdf`) and overwrite it on each run, keeping only a single "latest" file in Drive.
+- [x] In [`distribution/calendar_event.py`](distribution/calendar_event.py), modify `create_digest_calendar_event()` to search for an existing digest event for today's date and update it (via `events().update()`) instead of always inserting a new one.
+- [x] Add a config option (e.g., `DRIVE_FILE_NAME` or `DRIVE_OVERWRITE_MODE`) to control this behavior — whether to always replace or keep historical files.
+- [x] Update [`.env.example`](.env.example) with any new config variables.
+- [x] Update [`config.py`](config.py) `Settings` dataclass and `load_settings()` with any new config fields.

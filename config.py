@@ -59,6 +59,7 @@ class Settings:
 
     drive_folder_id: str
     drive_file_name: str
+    drive_overwrite_mode: bool
     digest_calendar_id: str
     digest_event_hour: int
     digest_event_minute: int
@@ -117,6 +118,7 @@ def load_settings() -> Settings:
         max_news_items=int(os.getenv("MAX_NEWS_ITEMS", "30")),
         drive_folder_id=os.getenv("DRIVE_FOLDER_ID", ""),
         drive_file_name=os.getenv("DRIVE_FILE_NAME", "Morning Digest - Latest.pdf"),
+        drive_overwrite_mode=_parse_bool(os.getenv("DRIVE_OVERWRITE_MODE"), default=True),
         digest_calendar_id=os.getenv("DIGEST_CALENDAR_ID", "primary"),
         digest_event_hour=int(os.getenv("DIGEST_EVENT_HOUR", "8")),
         digest_event_minute=int(os.getenv("DIGEST_EVENT_MINUTE", "0")),

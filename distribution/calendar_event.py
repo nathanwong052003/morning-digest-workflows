@@ -108,6 +108,7 @@ def create_digest_calendar_event(
     event_body = {
         "summary": title,
         "description": description,
+        "colorId": "8",  # Sage
         "start": {"dateTime": start_dt.isoformat(), "timeZone": settings.timezone_name},
         "end": {"dateTime": end_dt.isoformat(), "timeZone": settings.timezone_name},
         "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 10}]},
@@ -115,24 +116,41 @@ def create_digest_calendar_event(
 
     service = build("calendar", "v3", credentials=credentials, cache_discovery=False)
 
-    existing_event_id = _find_existing_event(service, settings.digest_calendar_id, digest_date)
+    if settings.drive_overwrite_mode:
+        # Overwrite mode: search for an existing event for today and update it
+        existing_event_id = _find_existing_event(service, settings.digest_calendar_id, digest_date)
 
-    if existing_event_id:
-        result = retry_call(
-            lambda: service.events()
-            .update(
-                calendarId=settings.digest_calendar_id,
-                eventId=existing_event_id,
-                body=event_body,
-                sendUpdates="none",
+        if existing_event_id:
+            result = retry_call(
+                lambda: service.events()
+                .update(
+                    calendarId=settings.digest_calendar_id,
+                    eventId=existing_event_id,
+                    body=event_body,
+                    sendUpdates="none",
+                )
+                .execute(),
+                attempts=3,
+                base_delay_seconds=1.0,
             )
-            .execute(),
-            attempts=3,
-            base_delay_seconds=1.0,
-        )
-        event_id = result.get("id", "")
-        action = "updated"
+            event_id = result.get("id", "")
+            action = "updated"
+        else:
+            result = retry_call(
+                lambda: service.events()
+                .insert(
+                    calendarId=settings.digest_calendar_id,
+                    body=event_body,
+                    sendUpdates="none",
+                )
+                .execute(),
+                attempts=3,
+                base_delay_seconds=1.0,
+            )
+            event_id = result.get("id", "")
+            action = "created"
     else:
+        # Historical mode: always insert a new event
         result = retry_call(
             lambda: service.events()
             .insert(
