@@ -80,7 +80,13 @@ def _collect_mock(now_local: datetime) -> list[GmailThread]:
             subject="Daily Ops Summary",
             snippet="Service health remains stable. One minor warning needs review.",
             labels=["INBOX", "IMPORTANT"],
-        )
+        ),
+        GmailThread(
+            sender="priority@example.com",
+            subject="Q4 Review Meeting",
+            snippet="Please review the attached documents before the meeting.",
+            labels=["INBOX", "IMPORTANT"],
+        ),
     ]
 
 
@@ -150,9 +156,9 @@ def collect_gmail_threads(
         snippet = truncate_text(detail.get("snippet", ""), limit=500)
         labels = first.get("labelIds", [])
 
-        # Only include threads that are in INBOX or marked IMPORTANT
+        # Only include threads that are in INBOX AND marked as priority (IMPORTANT)
         label_set = {label.upper() for label in labels}
-        if "INBOX" not in label_set and "IMPORTANT" not in label_set:
+        if "INBOX" not in label_set or "IMPORTANT" not in label_set:
             continue
 
         # Skip threads with excluded labels (e.g. CATEGORY_PROMOTIONS)
