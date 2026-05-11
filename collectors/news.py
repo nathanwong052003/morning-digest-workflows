@@ -47,25 +47,35 @@ SOURCE_ALIASES: dict[str, str] = {
     "the verge": "The Verge",
     "wall street journal": "Wall Street Journal",
     "wsj": "Wall Street Journal",
+    "the standard": "The Standard",
+    "ming pao": "Ming Pao",
+    "hk01": "HK01",
+    "ej insight": "EJ Insight",
+    "asia times": "Asia Times",
 }
 
 SOURCE_HOMEPAGES: dict[str, str] = {
     "AP": "https://apnews.com",
     "Ars Technica": "https://arstechnica.com",
+    "Asia Times": "https://asiatimes.com",
     "Bangkok Post": "https://www.bangkokpost.com",
     "BBC": "https://www.bbc.com",
     "Bloomberg": "https://www.bloomberg.com",
     "Channel NewsAsia": "https://www.channelnewsasia.com",
+    "EJ Insight": "https://www.ejinsight.com",
     "Financial Times": "https://www.ft.com",
     "HK Free Press": "https://hongkongfp.com",
+    "HK01": "https://www.hk01.com",
     "HKSAR Government": "https://www.info.gov.hk",
     "IEEE Spectrum": "https://spectrum.ieee.org",
     "Jakarta Post": "https://www.thejakartapost.com",
+    "Ming Pao": "https://www.mingpao.com",
     "Nikkei Asia": "https://asia.nikkei.com",
     "Philippine Star": "https://www.philstar.com",
     "Reuters": "https://www.reuters.com",
     "RTHK": "https://news.rthk.hk",
     "South China Morning Post": "https://www.scmp.com",
+    "The Standard": "https://www.thestandard.com.hk",
     "The Straits Times": "https://www.straitstimes.com",
     "The Verge": "https://www.theverge.com",
     "Wall Street Journal": "https://www.wsj.com",
@@ -84,6 +94,9 @@ CATEGORY_RSS_FEEDS: dict[str, tuple[str, ...]] = {
     "HONG KONG": (
         "https://news.google.com/rss/search?q=(Hong+Kong+OR+HKSAR+OR+LegCo+OR+Hang+Seng)+when:2d&hl=en-US&gl=US&ceid=US:en",
         "https://news.google.com/rss/search?q=(Hong+Kong+OR+HKSAR)+when:2d+(source:Reuters+OR+source:AP+OR+source:Bloomberg+OR+source:Financial+Times+OR+source:South+China+Morning+Post+OR+source:RTHK+OR+source:Hong+Kong+Free+Press+OR+source:Wall+Street+Journal)&hl=en-US&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=(Hong+Kong+economy+OR+Hong+Kong+property+OR+Hong+Kong+finance+OR+Hong+Kong+stock+market)+when:2d&hl=en-US&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=(Hong+Kong+OR+Hong+Kong+technology+OR+Hong+Kong+startup+OR+Hong+Kong+business)+when:2d&hl=en-US&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=(Hong+Kong+politics+OR+Hong+Kong+policy+OR+Hong+Kong+government+OR+Hong+Kong+regulation)+when:2d&hl=en-US&gl=US&ceid=US:en",
     ),
 }
 
@@ -124,6 +137,11 @@ CATEGORY_ALLOWED_SOURCES: dict[str, tuple[str, ...]] = {
         "Wall Street Journal",
         "GovHK",
         "HKSAR Government",
+        "The Standard",
+        "Ming Pao",
+        "HK01",
+        "EJ Insight",
+        "Asia Times",
     ),
 }
 
@@ -165,6 +183,11 @@ CATEGORY_ALLOWED_DOMAINS: dict[str, tuple[str, ...]] = {
         "wsj.com",
         "info.gov.hk",
         "news.gov.hk",
+        "thestandard.com.hk",
+        "mingpao.com",
+        "hk01.com",
+        "ejinsight.com",
+        "asiatimes.com",
     ),
 }
 
@@ -461,7 +484,12 @@ def _collect_mock() -> list[NewsItem]:
     ]
 
 
-def collect_news_items(*, settings: Settings, logger: JsonLogger) -> list[NewsItem]:
+def collect_news_by_category(*, settings: Settings, logger: JsonLogger) -> dict[str, list[NewsItem]]:
+    """Collect news items grouped by category.
+
+    Returns a dict like {"TECHNOLOGY": [...], "SOUTHEAST ASIA": [...], "HONG KONG": [...]}
+    with global deduplication across categories.
+    """
     step_start = perf_counter()
     if settings.mock_mode:
         items = _collect_mock()
@@ -471,7 +499,7 @@ def collect_news_items(*, settings: Settings, logger: JsonLogger) -> list[NewsIt
             item_count=len(items),
             latency=perf_counter() - step_start,
         )
-        return items
+        return {"TECHNOLOGY": items, "SOUTHEAST ASIA": [], "HONG KONG": []}
 
     cache_path = Path(settings.news_cache_path)
     cache = _read_cache(cache_path)
@@ -498,10 +526,16 @@ def collect_news_items(*, settings: Settings, logger: JsonLogger) -> list[NewsIt
             item_count=len(cached_items),
             latency=perf_counter() - step_start,
         )
-        return cached_items[: settings.max_news_items]
+        # When cache is hit, we still need categorized data.
+        # Re-collect to get proper categorization since cache is flat.
+        pass  # Fall through to re-collect
 
     category_counts: dict[str, int] = {}
-    deduped_items: list[NewsItem] = []
+    categorized: dict[str, list[NewsItem]] = {
+        "TECHNOLOGY": [],
+        "SOUTHEAST ASIA": [],
+        "HONG KONG": [],
+    }
     seen_urls: set[str] = set()
 
     for category in ("TECHNOLOGY", "SOUTHEAST ASIA", "HONG KONG"):
@@ -516,26 +550,43 @@ def collect_news_items(*, settings: Settings, logger: JsonLogger) -> list[NewsIt
             if len(picked) >= CATEGORY_TARGET_MAX:
                 break
         category_counts[category] = len(picked)
-        deduped_items.extend(picked)
+        categorized[category] = picked
 
-    items = deduped_items[: settings.max_news_items]
+    # Flatten for cache (backward-compatible cache format)
+    all_items: list[NewsItem] = []
+    for cat_items in categorized.values():
+        all_items.extend(cat_items)
     _write_cache(
         cache_path,
         {
             "version": CACHE_VERSION,
             "fetched_at": now.isoformat(),
-            "items": [item.model_dump(mode="json") for item in items],
+            "items": [item.model_dump(mode="json") for item in all_items],
             "category_counts": category_counts,
         },
     )
     logger.info(
         "news_collected",
         step="news",
-        item_count=len(items),
+        item_count=sum(len(v) for v in categorized.values()),
         technology_count=category_counts.get("TECHNOLOGY", 0),
         southeast_asia_count=category_counts.get("SOUTHEAST ASIA", 0),
         hong_kong_count=category_counts.get("HONG KONG", 0),
         latency=perf_counter() - step_start,
         cache_path=str(cache_path),
     )
-    return items
+    return categorized
+
+
+def collect_news_items(*, settings: Settings, logger: JsonLogger) -> list[NewsItem]:
+    """Legacy flat collection — returns all news items deduplicated."""
+    categorized = collect_news_by_category(settings=settings, logger=logger)
+    result: list[NewsItem] = []
+    seen_urls: set[str] = set()
+    for cat_items in categorized.values():
+        for item in cat_items:
+            url = str(item.url)
+            if url not in seen_urls:
+                seen_urls.add(url)
+                result.append(item)
+    return result

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from build_digest_pdf import convert as convert_html_to_pdf
-from models import DigestSummary, NewsItem, RankedNewsItem, RawDigestData
+from models import CategorizedNews, DigestSummary, NewsItem, RankedNewsItem, RawDigestData
 
 
 def _escape(text: str) -> str:
@@ -18,6 +18,17 @@ def _clean_display_text(text: str) -> str:
     cleaned = html.unescape(text or "").strip()
     cleaned = re.sub(r"\s*\[\s*(?:\.\.\.|…)\s*\]\s*$", "", cleaned)
     cleaned = re.sub(r"\s*\[\s*&?#8230;\s*\]\s*$", "", cleaned, flags=re.IGNORECASE)
+    # Strip leading source/agency attribution (e.g., "Reuters — ", "AP — ", "Bloomberg - ")
+    cleaned = re.sub(
+        r"^(?:Reuters|AP|Bloomberg|BBC|Financial Times|Nikkei Asia|Channel NewsAsia|"
+        r"South China Morning Post|SCMP|The Straits Times|Bangkok Post|Philippine Star|"
+        r"Jakarta Post|RTHK|HK Free Press|Wall Street Journal|The Verge|Ars Technica|"
+        r"MIT Technology Review|Wired|IEEE Spectrum|GovHK|HKSAR Government|"
+        r"The Standard|Ming Pao|HK01|EJ Insight|Asia Times)\s*[—–\-:]\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
     cleaned = cleaned.strip()
     if cleaned and cleaned[-1] not in ".!?":
         sentence_endings = [cleaned.rfind("."), cleaned.rfind("!"), cleaned.rfind("?")]
@@ -63,6 +74,57 @@ def _news_identity(*, title: str, url: str) -> str:
         return f"url:{normalized_url}"
     title_key = re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
     return f"title:{title_key}"
+
+
+def _split_news(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[RankedNewsItem], list[RankedNewsItem]]:
+    """Extract per-category news from the pre-split categorized data.
+
+    Each category's items come directly from the AI, already ranked and summarized
+    for that specific category. Falls back to inference-based splitting when
+    categorized data is empty (e.g., mock mode).
+    """
+    cat = raw_data.categorized_news
+
+    # If we have AI-ranked news, use categorized_news to pick the right items
+    if raw_data.ranked_news and (cat.technology or cat.southeast_asia or cat.hong_kong):
+        # Build lookup by URL to match ranked items back to their categories
+        cat_urls: dict[str, str] = {}
+        for item in cat.technology:
+            cat_urls[str(item.url)] = "TECHNOLOGY"
+        for item in cat.southeast_asia:
+            cat_urls[str(item.url)] = "SOUTHEAST ASIA"
+        for item in cat.hong_kong:
+            cat_urls[str(item.url)] = "HONG KONG"
+
+        buckets: dict[str, list[RankedNewsItem]] = {
+            "TECHNOLOGY": [],
+            "SOUTHEAST ASIA": [],
+            "HONG KONG": [],
+        }
+        seen_keys: set[str] = set()
+
+        for row in raw_data.ranked_news:
+            url = str(row.url)
+            category = cat_urls.get(url, row.category if row.category in buckets else "")
+            if not category or category not in buckets:
+                continue
+            max_items = 5 if category in ("SOUTHEAST ASIA", "HONG KONG") else 3
+            if len(buckets[category]) >= max_items:
+                continue
+            key = _news_identity(title=row.title, url=url)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            buckets[category].append(row)
+
+        return (
+            buckets["TECHNOLOGY"][:3],
+            buckets["SOUTHEAST ASIA"][:5],
+            buckets["HONG KONG"][:5],
+        )
+
+    # Fallback: use inference-based splitting (mock mode or no categorized data)
+    return _split_news_fallback(raw_data)
 
 
 def _parse_schedule_line(line: str) -> tuple[str, str]:
@@ -227,7 +289,7 @@ def _infer_category(item: RankedNewsItem | NewsItem) -> str:
     )
     if any(token in haystack for token in tech_tokens):
         return "TECHNOLOGY"
-    if any(token in haystack for token in ("hong kong", " hk ", "hk$", "hang seng", "legco", "hksar")):
+    if any(token in haystack for token in ("hong kong", " hk ", "hk$", "hang seng", "legco", "hksar", "rthk", "hong kong free press", "the standard", "ming pao", "hk01", "ej insight")):
         return "HONG KONG"
     sea_tokens = (
         "southeast asia",
@@ -312,8 +374,9 @@ def _to_ranked(item: NewsItem, category: str) -> RankedNewsItem:
     )
 
 
-def _split_news(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[RankedNewsItem], list[RankedNewsItem]]:
-    ranked = list(raw_data.ranked_news[:18])
+def _split_news_fallback(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[RankedNewsItem], list[RankedNewsItem]]:
+    """Fallback splitting using inference when categorized data is unavailable."""
+    ranked = list(raw_data.ranked_news[:30])
 
     buckets: dict[str, list[RankedNewsItem]] = {
         "TECHNOLOGY": [],
@@ -322,11 +385,12 @@ def _split_news(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[Ran
     }
     seen_keys: set[str] = set()
 
-    def _add_to_bucket(category: str, row: RankedNewsItem) -> bool:
-        if category not in buckets or len(buckets[category]) >= 3:
+    def _add_to_bucket(category: str, row: RankedNewsItem, *, force: bool = False) -> bool:
+        max_items = 5 if category in ("SOUTHEAST ASIA", "HONG KONG") else 3
+        if category not in buckets or len(buckets[category]) >= max_items:
             return False
         key = _news_identity(title=row.title, url=str(row.url))
-        if key in seen_keys:
+        if not force and key in seen_keys:
             return False
         seen_keys.add(key)
         buckets[category].append(row)
@@ -342,18 +406,21 @@ def _split_news(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[Ran
         inferred = _infer_category(item)
         _add_to_bucket(inferred, _to_ranked(item, inferred))
 
-    # Ensure each section remains populated while preserving global dedupe.
+    # Ensure each section is fully populated by force-assigning remaining slots
+    # from the full news pool, bypassing seen_keys dedup so items already placed
+    # in one category can also fill another.
     for category in ("TECHNOLOGY", "SOUTHEAST ASIA", "HONG KONG"):
-        if len(buckets[category]) >= 3:
+        max_items = 5 if category in ("SOUTHEAST ASIA", "HONG KONG") else 3
+        if len(buckets[category]) >= max_items:
             continue
         for item in raw_data.news:
-            if _add_to_bucket(category, _to_ranked(item, category)) and len(buckets[category]) >= 3:
+            if _add_to_bucket(category, _to_ranked(item, category), force=True) and len(buckets[category]) >= max_items:
                 break
 
     return (
         buckets["TECHNOLOGY"][:3],
-        buckets["SOUTHEAST ASIA"][:3],
-        buckets["HONG KONG"][:3],
+        buckets["SOUTHEAST ASIA"][:5],
+        buckets["HONG KONG"][:5],
     )
 
 
@@ -449,19 +516,25 @@ def _warning_banner_html(warning_banner: str | None) -> str:
     return f'<div class="warning-banner">{_escape(warning_banner)}</div>'
 
 
+_HKT = timezone(timedelta(hours=8), name="HKT")
+
+
 def _render_html(*, summary: DigestSummary, raw_data: RawDigestData, digest_date: date, warning_banner: str | None) -> str:
     template_path = Path(__file__).with_name("template.html")
     template = template_path.read_text(encoding="utf-8")
     display_date = f"{digest_date.strftime('%B')} {digest_date.day}, {digest_date.year}"
+    now = datetime.now(_HKT)
+    generated_at = now.strftime("%B %d, %Y at %I:%M %p HKT")
     tech_news, sea_news, hk_news = _split_news(raw_data)
-    sea_hk = sea_news + hk_news
     return (
         template.replace("{{DIGEST_DATE}}", _escape(display_date))
+        .replace("{{GENERATED_AT}}", _escape(generated_at))
         .replace("{{WARNING_BANNER_HTML}}", _warning_banner_html(warning_banner))
         .replace("{{SCHEDULE_ITEMS_HTML}}", _schedule_items_html(summary, raw_data, digest_date))
         .replace("{{INBOX_ITEMS_HTML}}", _inbox_items_html(summary, raw_data))
         .replace("{{TECHNOLOGY_ITEMS_HTML}}", _news_blocks_html(tech_news))
-        .replace("{{SEA_HK_ITEMS_HTML}}", _news_blocks_html(sea_hk))
+        .replace("{{SEA_ITEMS_HTML}}", _news_blocks_html(sea_news))
+        .replace("{{HK_ITEMS_HTML}}", _news_blocks_html(hk_news))
     )
 
 

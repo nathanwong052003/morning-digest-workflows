@@ -58,8 +58,15 @@ class DigestSummary(BaseModel):
     action_items: list[str] = Field(default_factory=list)
 
 
+class CategorizedNews(BaseModel):
+    technology: list[NewsItem] = Field(default_factory=list)
+    southeast_asia: list[NewsItem] = Field(default_factory=list)
+    hong_kong: list[NewsItem] = Field(default_factory=list)
+
+
 class RawDigestData(BaseModel):
     calendar: list[CalendarEvent] = Field(default_factory=list)
     emails: list[GmailThread] = Field(default_factory=list)
     news: list[NewsItem] = Field(default_factory=list)
     ranked_news: list[RankedNewsItem] = Field(default_factory=list)
+    categorized_news: CategorizedNews = Field(default_factory=CategorizedNews)

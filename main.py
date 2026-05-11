@@ -7,11 +7,11 @@ from ai.deepseek_client import DeepSeekClient, DeepSeekError
 from auth.google_oauth import get_google_credentials
 from collectors.calendar import collect_calendar_events
 from collectors.gmail import collect_gmail_threads
-from collectors.news import collect_news_items
+from collectors.news import collect_news_by_category, collect_news_items
 from config import Settings, load_settings
 from distribution.calendar_event import create_digest_calendar_event
 from distribution.drive import upload_pdf_to_drive
-from models import DigestSummary, RawDigestData
+from models import CategorizedNews, DigestSummary, RankedNewsItem, RawDigestData
 from pdf.generator import generate_digest_pdf
 from utils.logging import JsonLogger
 
@@ -83,6 +83,9 @@ def run(settings: Settings) -> int:
         credentials=credentials,
         logger=logger,
     )
+
+    # Collect news per category — each category gets its own RSS-fetched pool
+    categorized_news = collect_news_by_category(settings=settings, logger=logger)
     news_items = collect_news_items(settings=settings, logger=logger)
     ranked_news = []
 
@@ -91,6 +94,11 @@ def run(settings: Settings) -> int:
         emails=gmail_threads,
         news=news_items,
         ranked_news=ranked_news,
+        categorized_news=CategorizedNews(
+            technology=categorized_news.get("TECHNOLOGY", []),
+            southeast_asia=categorized_news.get("SOUTHEAST ASIA", []),
+            hong_kong=categorized_news.get("HONG KONG", []),
+        ),
     )
 
     warning_banner: str | None = None
@@ -101,8 +109,23 @@ def run(settings: Settings) -> int:
     elif settings.deepseek_api_key:
         try:
             deepseek = DeepSeekClient(settings=settings, logger=logger)
-            ranked_news = deepseek.rank_news(news_items)
-            ranked_news = deepseek.refine_news_summaries(ranked_news)
+
+            # Query AI separately for each category
+            all_ranked: list[RankedNewsItem] = []
+            for cat_name, cat_items in [
+                ("TECHNOLOGY", categorized_news.get("TECHNOLOGY", [])),
+                ("SOUTHEAST ASIA", categorized_news.get("SOUTHEAST ASIA", [])),
+                ("HONG KONG", categorized_news.get("HONG KONG", [])),
+            ]:
+                if not cat_items:
+                    continue
+                cat_ranked = deepseek.rank_news(cat_items, category=cat_name)
+                cat_ranked = deepseek.refine_news_summaries(cat_ranked)
+                all_ranked.extend(cat_ranked)
+
+            # Sort globally by relevance for the summary
+            all_ranked.sort(key=lambda item: item.relevance, reverse=True)
+            ranked_news = all_ranked
             raw_data.ranked_news = ranked_news
             summary = build_fallback_summary(raw_data)
             if deepseek.is_budget_exceeded():

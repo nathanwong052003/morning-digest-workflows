@@ -298,22 +298,39 @@ class DeepSeekClient:
     def rank_news(
         self,
         news_items: list[NewsItem],
+        *,
+        category: str = "TECHNOLOGY",
     ) -> list[RankedNewsItem]:
+        """Rank news items for a specific category.
+
+        The category is pre-determined (from RSS feed grouping), so the AI only
+        needs to rank relevance and assign a tag + summary — no category guessing needed.
+        """
         if not news_items:
             return []
+
+        category_lower = category.lower().replace(" ", "_")
+        tags_by_category = {
+            "TECHNOLOGY": "AI, Hardware, Software, Cybersecurity, Science, Robotics, Space",
+            "SOUTHEAST ASIA": "Finance, Policy, Startups, Society, Security, Trade, Energy, Environment",
+            "HONG KONG": "Finance, Society, Policy, Business, Security, Culture, Education",
+        }
+        tags = tags_by_category.get(category, "News")
+        summary_length = (
+            "3-4 detailed complete sentences providing substantive context and detail"
+            if category in ("SOUTHEAST ASIA", "HONG KONG")
+            else "2-3 detailed complete sentences providing substantive information"
+        )
 
         indexed_news = list(enumerate(news_items))
         payload = {
             "task": (
-                "Rank each news item for today's relevance. "
+                f"Rank each {category_lower} news item for today's relevance. "
                 "Return JSON with key 'ranked_news' containing list of "
-                "{item_id,title,url,relevance,reason,category,tag,summary}. "
+                "{item_id,title,url,relevance,reason,tag,summary}. "
                 "Use the exact item_id provided in input. relevance is integer 0-100. "
-                "Use category exactly from: TECHNOLOGY, SOUTHEAST ASIA, HONG KONG. "
-                "Tags for TECHNOLOGY: AI, Hardware, Software, Cybersecurity, Science, Robotics, Space. "
-                "Tags for SOUTHEAST ASIA: Finance, Policy, Startups, Society, Security, Trade, Energy, Environment. "
-                "Tags for HONG KONG: Finance, Society, Policy, Business, Security, Culture, Education. "
-                "summary must be 2-3 detailed complete sentences providing substantive information. "
+                f"Tags for this category: {tags}. "
+                f"summary must be {summary_length}. "
                 "Never end mid-sentence. Do not include ellipsis. "
                 "Do NOT mention the news source or publication name in the summary text."
             ),
@@ -325,7 +342,7 @@ class DeepSeekClient:
                 for idx, item in indexed_news[:30]
             ],
         }
-        result = self._call_json(step="ai_rank_news", user_payload=payload)
+        result = self._call_json(step=f"ai_rank_{category_lower}", user_payload=payload)
         ranked_raw = result.get("ranked_news", [])
         if not isinstance(ranked_raw, list):
             ranked_raw = []
@@ -344,7 +361,7 @@ class DeepSeekClient:
         }
         by_title = {item.title.strip().casefold(): idx for idx, item in indexed_news if item.title.strip()}
 
-        scores: dict[int, tuple[int, str, str, str, str]] = {}
+        scores: dict[int, tuple[int, str, str, str]] = {}
         for row in ranked_raw:
             if not isinstance(row, dict):
                 continue
@@ -369,22 +386,18 @@ class DeepSeekClient:
             except (TypeError, ValueError):
                 score = 50
             score = min(100, max(0, score))
-            category = str(row.get("category", "")).strip().upper()
-            if category not in {"TECHNOLOGY", "SOUTHEAST ASIA", "HONG KONG"}:
-                category = "TECHNOLOGY"
             scores[item_index] = (
                 score,
                 str(row.get("reason", "")),
-                category,
                 str(row.get("tag", "")).strip(),
                 str(row.get("summary", "")).strip(),
             )
 
         ranked_items = []
         for idx, item in indexed_news:
-            score, reason, category, tag, ai_summary = scores.get(
+            score, reason, tag, ai_summary = scores.get(
                 idx,
-                (50, "Default relevance due to parsing fallback.", "TECHNOLOGY", "", ""),
+                (50, "Default relevance due to parsing fallback.", "", ""),
             )
             ranked_items.append(
                 RankedNewsItem(
@@ -408,8 +421,10 @@ class DeepSeekClient:
             return ranked_news
         payload = {
             "task": (
-                "Rewrite each item into a detailed 2-3 sentence summary using title/source/snippet context. "
+                "Rewrite each item into a detailed summary using title/source/snippet context. "
                 "Return JSON object with key 'summaries' containing list of {item_id,summary}. "
+                "For SOUTHEAST ASIA and HONG KONG items, write longer 3-4 sentence summaries with more context and detail. "
+                "For TECHNOLOGY items, write 2-3 sentence summaries. "
                 "Summary must be complete sentences, not ending mid-sentence, and must not include ellipsis. "
                 "Do NOT mention the news source or publication name in the summary text."
             ),
