@@ -108,7 +108,7 @@ def create_digest_calendar_event(
     event_body = {
         "summary": title,
         "description": description,
-        "colorId": "8",  # Sage
+        "colorId": "2",  # Sage
         "start": {"dateTime": start_dt.isoformat(), "timeZone": settings.timezone_name},
         "end": {"dateTime": end_dt.isoformat(), "timeZone": settings.timezone_name},
         "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 10}]},
