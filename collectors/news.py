@@ -20,7 +20,7 @@ from utils.logging import JsonLogger
 from utils.retries import retry_call
 
 CACHE_VERSION = 2
-CATEGORY_TARGET_MAX = 8
+CATEGORY_TARGET_MAX = 12
 
 
 def _source_key(value: str) -> str:

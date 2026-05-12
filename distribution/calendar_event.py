@@ -111,7 +111,7 @@ def create_digest_calendar_event(
         "colorId": "2",  # Sage
         "start": {"dateTime": start_dt.isoformat(), "timeZone": settings.timezone_name},
         "end": {"dateTime": end_dt.isoformat(), "timeZone": settings.timezone_name},
-        "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 10}]},
+        "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 0}]},
     }
 
     service = build("calendar", "v3", credentials=credentials, cache_discovery=False)

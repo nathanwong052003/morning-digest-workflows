@@ -108,7 +108,7 @@ def _split_news(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[Ran
             category = cat_urls.get(url, row.category if row.category in buckets else "")
             if not category or category not in buckets:
                 continue
-            max_items = 5 if category in ("SOUTHEAST ASIA", "HONG KONG") else 3
+            max_items = 7
             if len(buckets[category]) >= max_items:
                 continue
             key = _news_identity(title=row.title, url=url)
@@ -118,9 +118,9 @@ def _split_news(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[Ran
             buckets[category].append(row)
 
         return (
-            buckets["TECHNOLOGY"][:3],
-            buckets["SOUTHEAST ASIA"][:5],
-            buckets["HONG KONG"][:5],
+            buckets["TECHNOLOGY"][:7],
+            buckets["SOUTHEAST ASIA"][:7],
+            buckets["HONG KONG"][:7],
         )
 
     # Fallback: use inference-based splitting (mock mode or no categorized data)
@@ -386,7 +386,7 @@ def _split_news_fallback(raw_data: RawDigestData) -> tuple[list[RankedNewsItem],
     seen_keys: set[str] = set()
 
     def _add_to_bucket(category: str, row: RankedNewsItem, *, force: bool = False) -> bool:
-        max_items = 5 if category in ("SOUTHEAST ASIA", "HONG KONG") else 3
+        max_items = 7
         if category not in buckets or len(buckets[category]) >= max_items:
             return False
         key = _news_identity(title=row.title, url=str(row.url))
@@ -410,7 +410,7 @@ def _split_news_fallback(raw_data: RawDigestData) -> tuple[list[RankedNewsItem],
     # from the full news pool, bypassing seen_keys dedup so items already placed
     # in one category can also fill another.
     for category in ("TECHNOLOGY", "SOUTHEAST ASIA", "HONG KONG"):
-        max_items = 5 if category in ("SOUTHEAST ASIA", "HONG KONG") else 3
+        max_items = 7
         if len(buckets[category]) >= max_items:
             continue
         for item in raw_data.news:
@@ -418,9 +418,9 @@ def _split_news_fallback(raw_data: RawDigestData) -> tuple[list[RankedNewsItem],
                 break
 
     return (
-        buckets["TECHNOLOGY"][:3],
-        buckets["SOUTHEAST ASIA"][:5],
-        buckets["HONG KONG"][:5],
+        buckets["TECHNOLOGY"][:7],
+        buckets["SOUTHEAST ASIA"][:7],
+        buckets["HONG KONG"][:7],
     )
 
 
@@ -472,7 +472,7 @@ def _schedule_items_html(summary: DigestSummary, raw_data: RawDigestData, digest
 def _inbox_items_html(summary: DigestSummary, raw_data: RawDigestData) -> str:
     lines = [f"{email.sender} - {email.subject}" for email in raw_data.emails[:10]] or summary.emails
     if not lines:
-        return "<li>Free!</li>"
+        return "<li>No new priority emails.</li>"
     rows = []
     for line in lines:
         label = _inbox_label(line)

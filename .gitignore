@@ -11,3 +11,4 @@ client_secret.json
 /collectors/__pycache__
 /auth/__pycache__
 /ai/__pycache__
+/output
