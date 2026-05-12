@@ -12,3 +12,4 @@ client_secret.json
 /auth/__pycache__
 /ai/__pycache__
 /output
+/.claude

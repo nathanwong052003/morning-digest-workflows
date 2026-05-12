@@ -1,10 +1,11 @@
 # Morning Digest (GitHub Actions + DeepSeek)
 
 Automated daily digest at **08:00 UTC+8**:
-1. Collects Google Calendar events, Gmail threads, and news feeds.
+1. Collects Google Calendar events, Gmail threads, news feeds, and Hong Kong weather.
 2. Uses DeepSeek only for news ranking + summary.
-3. Generates a clean PDF (`reportlab`).
-4. Uploads PDF to Google Drive and creates a Google Calendar event with the PDF link.
+3. Detects "developing" stories (topic overlap vs. recent days) and dedupes exact repeats.
+4. Generates a clean PDF (WeasyPrint / ReportLab fallback).
+5. Uploads PDF to Google Drive, creates a Google Calendar event, and emails the digest to you with the PDF attached.
 
 ## Project structure
 
@@ -19,13 +20,17 @@ morning-digest/
 │   ├── gmail.py
 │   └── news.py
 ├── ai/deepseek_client.py
+├── collectors/weather.py
 ├── pdf/generator.py
 ├── distribution/
 │   ├── drive.py
-│   └── calendar_event.py
+│   ├── calendar_event.py
+│   ├── email.py
+│   └── email_template.html
 ├── utils/
 │   ├── logging.py
-│   └── retries.py
+│   ├── retries.py
+│   └── news_history.py
 ├── requirements.txt
 └── .github/workflows/digest.yml
 ```
@@ -58,6 +63,26 @@ This validates collectors → AI fallback behavior → PDF generation in a safe 
 ### Google destinations
 - `DRIVE_FOLDER_ID`
 - `DIGEST_CALENDAR_ID` (default: `primary`)
+- `DIGEST_EMAIL_TO` (recipient for the morning email; default `nathanwongshihhao@gmail.com`)
+
+### Weather (Open-Meteo, no API key required)
+- `WEATHER_LATITUDE` (default `22.3193` — Hong Kong)
+- `WEATHER_LONGITUDE` (default `114.1694` — Hong Kong)
+- `WEATHER_TIMEZONE` (default `Asia/Hong_Kong`)
+- `WEATHER_CITY_LABEL` (default `Hong Kong`)
+- Forecast covers 7am / 12pm / 5pm / 9pm cross-section for the day.
+
+### News diff (developing stories)
+- `NEWS_HISTORY_PATH` (default `/tmp/morning_digest_news_history.json`)
+- Stores the previous 3 days of news URLs + headlines.
+- Exact-URL repeats from prior days are silently dropped.
+- Stories whose title/snippet share significant keywords with a prior-day item are flagged `CONTINUING` and surfaced in a "Developing stories" block.
+
+### Digest iteration counter
+- `DIGEST_COUNTER_PATH` (default `/tmp/morning_digest_counter.json`)
+- Tracks an integer that increments by 1 each new day. The PDF filename, email subject, and calendar event title are all prefixed with the current iteration (e.g. `42. Morning Digest — May 12, 2026`).
+- Re-running on the same day reuses the same number.
+- Persisted across GitHub Actions runs via the `digest-counter-` cache key.
 
 ### Gmail filters
 - `GMAIL_LABEL_IDS` (comma-separated label IDs)
@@ -102,16 +127,20 @@ This validates collectors → AI fallback behavior → PDF generation in a safe 
    - `CLIENT_ID`
    - `CLIENT_SECRET`
    - `REFRESH_TOKEN`
+   - `DIGEST_EMAIL_TO`
 5. Runtime uses `google.oauth2.credentials.Credentials` and refreshes access tokens automatically.
+
+> **Scope change:** The pipeline now sends an email each morning, which requires the `gmail.send` scope. **If you set up your refresh token before this change, re-run `python get_refresh_token.py` and update the `REFRESH_TOKEN` secret** — the existing token does not include the send scope and the email step will fail until the new token is in place.
 
 ## GitHub Actions
 
 Workflow: `.github/workflows/digest.yml`
-- Runs daily at `0 0 * * *` (UTC), which is **08:00 UTC+8**.
+- Runs daily at `00 00 * * *` (UTC), which is **08:00 UTC+8**.
 - Supports manual trigger (`workflow_dispatch`).
 - Manual trigger supports `mock_mode=true` to run without external APIs.
 - Uploads generated PDF as an artifact each run.
 - Uploads DeepSeek request/response audit logs as `deepseek-audit-log` artifact.
+- Caches the news-history JSON across runs (key prefix `news-history-`) so developing-story detection persists.
 
 ## Reliability and observability
 
@@ -124,3 +153,4 @@ Workflow: `.github/workflows/digest.yml`
 - If AI fails or token budget is exceeded, PDF still generates with:
   - `⚠ AI unavailable` warning banner
   - Raw-data fallback digest content
+- Email send is wrapped in a try/except — if Gmail send fails for any reason, the Drive upload + Calendar event still complete.

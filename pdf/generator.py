@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from build_digest_pdf import convert as convert_html_to_pdf
-from models import CategorizedNews, DigestSummary, NewsItem, RankedNewsItem, RawDigestData
+from models import CategorizedNews, DigestSummary, NewsItem, RankedNewsItem, RawDigestData, WeatherSnapshot
 
 
 def _escape(text: str) -> str:
@@ -462,6 +462,50 @@ def _pill_html(label: str) -> str:
 
 
 
+def _weather_html(weather: WeatherSnapshot | None) -> str:
+    if not weather or not weather.hours:
+        return ""
+    cells = []
+    for hour in weather.hours[:6]:
+        precip_html = (
+            f'<span style="font-size:10px;color:#999;"> 💧{hour.precipitation_chance}%</span>'
+            if hour.precipitation_chance >= 20 else ""
+        )
+        cells.append(
+            f'<div style="display:inline-block;width:16%;text-align:center;padding:8px 4px;'
+            f'border-right:1px solid #eee;vertical-align:top;">'
+            f'<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">{_escape(hour.hour_label)}</div>'
+            f'<div style="font-size:22px;line-height:1.2;margin:4px 0;">{_escape(hour.icon)}</div>'
+            f'<div style="font-size:15px;font-weight:600;color:#111;">{round(hour.temperature_c)}°</div>'
+            f'{precip_html}'
+            f'</div>'
+        )
+    cells_html = "".join(cells).rsplit("border-right:1px solid #eee;", 1)[0] + "border-right:none;"
+
+    high_low = ""
+    if weather.high_c is not None and weather.low_c is not None:
+        high_low = (
+            f'<span style="color:#666;">High {round(weather.high_c)}° / Low {round(weather.low_c)}°</span>'
+        )
+    sun = ""
+    if weather.sunrise and weather.sunset:
+        sun = f'<span style="color:#888;">Sunrise {_escape(weather.sunrise)} / Sunset {_escape(weather.sunset)}</span>'
+
+    summary_line = f"{_escape(weather.summary)}"
+    extras = " · ".join(filter(None, [high_low, sun]))
+    if extras:
+        summary_line += f" · {extras}"
+
+    return (
+        f'<div style="margin-bottom:16px;">'
+        f'<div style="font-size:13px;color:#444;margin-bottom:8px;">{summary_line}</div>'
+        f'<div style="background:#fafaf7;border:1px solid #efefe9;border-radius:8px;padding:4px 0;">'
+        f'{cells_html}'
+        f'</div>'
+        f'</div>'
+    )
+
+
 def _schedule_items_html(summary: DigestSummary, raw_data: RawDigestData, digest_date: date) -> str:
     lines = [f"{event.start_local} - {event.end_local}: {event.title}" for event in raw_data.calendar[:12]] or summary.schedule
     if not lines:
@@ -524,12 +568,13 @@ def _render_html(*, summary: DigestSummary, raw_data: RawDigestData, digest_date
     template = template_path.read_text(encoding="utf-8")
     display_date = f"{digest_date.strftime('%B')} {digest_date.day}, {digest_date.year}"
     now = datetime.now(_HKT)
-    generated_at = now.strftime("%B %d, %Y at %I:%M %p HKT")
+    generated_at = now.strftime("%B %d, %Y at %I:%M %p") + " HKT"
     tech_news, sea_news, hk_news = _split_news(raw_data)
     return (
         template.replace("{{DIGEST_DATE}}", _escape(display_date))
         .replace("{{GENERATED_AT}}", _escape(generated_at))
         .replace("{{WARNING_BANNER_HTML}}", _warning_banner_html(warning_banner))
+        .replace("{{WEATHER_HTML}}", _weather_html(raw_data.weather))
         .replace("{{SCHEDULE_ITEMS_HTML}}", _schedule_items_html(summary, raw_data, digest_date))
         .replace("{{INBOX_ITEMS_HTML}}", _inbox_items_html(summary, raw_data))
         .replace("{{TECHNOLOGY_ITEMS_HTML}}", _news_blocks_html(tech_news))

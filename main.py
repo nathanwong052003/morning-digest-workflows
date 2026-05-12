@@ -8,12 +8,16 @@ from auth.google_oauth import get_google_credentials
 from collectors.calendar import collect_calendar_events
 from collectors.gmail import collect_gmail_threads
 from collectors.news import collect_news_by_category, collect_news_items
+from collectors.weather import collect_weather
 from config import Settings, load_settings
 from distribution.calendar_event import create_digest_calendar_event
 from distribution.drive import upload_pdf_to_drive
+from distribution.email import send_digest_email
 from models import CategorizedNews, DigestSummary, RankedNewsItem, RawDigestData
 from pdf.generator import generate_digest_pdf
+from utils.digest_counter import next_iteration
 from utils.logging import JsonLogger
+from utils.news_history import apply_news_diff
 
 
 def build_fallback_summary(data: RawDigestData) -> DigestSummary:
@@ -22,41 +26,7 @@ def build_fallback_summary(data: RawDigestData) -> DigestSummary:
         for event in data.calendar[:10]
     ]
     emails = [f"{email.sender} - {email.subject}" for email in data.emails[:10]]
-    if data.ranked_news:
-        news = [
-            (
-                f"{item.ai_summary} ({item.source})"
-                if item.ai_summary
-                else f"{item.title} ({item.source})"
-            )
-            for item in data.ranked_news[:10]
-        ]
-    else:
-        news = [f"{item.title} ({item.source})" for item in data.news[:10]]
-    action_items = [
-        "Review top calendar conflicts and prioritize today's meetings.",
-        "Reply to urgent inbox threads first.",
-        "Skim top-ranked news links during breaks.",
-    ]
-    return DigestSummary(
-        schedule=schedule,
-        emails=emails,
-        news=news,
-        action_items=action_items,
-    )
-
-
-def build_mock_ai_summary(data: RawDigestData) -> DigestSummary:
-    return DigestSummary(
-        schedule=[f"{item.start_local} {item.title}" for item in data.calendar[:5]],
-        emails=[f"{item.subject} ({item.sender})" for item in data.emails[:5]],
-        news=[f"{item.title} [{item.source}] - {item.url}" for item in data.news[:5]],
-        action_items=[
-            "Confirm top two priorities before first meeting.",
-            "Respond to highest-impact inbox thread.",
-            "Read the most relevant news link and note implications.",
-        ],
-    )
+    return DigestSummary(schedule=schedule, emails=emails)
 
 
 def run(settings: Settings) -> int:
@@ -65,9 +35,17 @@ def run(settings: Settings) -> int:
 
     now_local = settings.now_local()
     digest_date = now_local.date()
+    iteration = next_iteration(
+        Path(settings.digest_counter_path),
+        today_key=digest_date.isoformat(),
+    )
+    digest_title = (
+        f"{iteration}. Morning Digest — "
+        f"{digest_date.strftime('%B')} {digest_date.day}, {digest_date.year}"
+    )
     output_dir = Path(settings.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"Morning Digest — {digest_date.strftime('%B')} {digest_date.day}, {digest_date.year}.pdf"
+    output_path = output_dir / f"{digest_title}.pdf"
 
     credentials = None
     if not settings.mock_mode:
@@ -89,6 +67,8 @@ def run(settings: Settings) -> int:
     news_items = collect_news_items(settings=settings, logger=logger)
     ranked_news = []
 
+    weather_snapshot = collect_weather(settings=settings, logger=logger)
+
     raw_data = RawDigestData(
         calendar=calendar_events,
         emails=gmail_threads,
@@ -99,12 +79,13 @@ def run(settings: Settings) -> int:
             southeast_asia=categorized_news.get("SOUTHEAST ASIA", []),
             hong_kong=categorized_news.get("HONG KONG", []),
         ),
+        weather=weather_snapshot,
     )
 
     warning_banner: str | None = None
     summary: DigestSummary
     if settings.mock_mode and not settings.deepseek_api_key:
-        summary = build_mock_ai_summary(raw_data)
+        summary = build_fallback_summary(raw_data)
         logger.info("ai_mock_summary", step="ai")
     elif settings.deepseek_api_key:
         try:
@@ -140,6 +121,21 @@ def run(settings: Settings) -> int:
         summary = build_fallback_summary(raw_data)
         logger.warning("ai_missing_key", step="ai")
 
+    developing_items: list[RankedNewsItem] = []
+    if raw_data.ranked_news and not settings.mock_mode:
+        fresh, developing_items = apply_news_diff(
+            ranked_news=raw_data.ranked_news,
+            history_path=Path(settings.news_history_path),
+            now=now_local,
+        )
+        raw_data.ranked_news = fresh
+        logger.info(
+            "news_diff_applied",
+            step="news_diff",
+            fresh_count=len(fresh),
+            developing_count=len(developing_items),
+        )
+
     generate_digest_pdf(
         summary=summary,
         raw_data=raw_data,
@@ -172,11 +168,28 @@ def run(settings: Settings) -> int:
         settings=settings,
         credentials=credentials,
         digest_date=digest_date,
+        iteration=iteration,
         summary=summary,
         raw_data=raw_data,
         digest_link=drive_link,
         logger=logger,
     )
+
+    try:
+        send_digest_email(
+            settings=settings,
+            credentials=credentials,
+            digest_date=digest_date,
+            iteration=iteration,
+            summary=summary,
+            raw_data=raw_data,
+            pdf_path=output_path,
+            warning_banner=warning_banner,
+            developing=developing_items,
+            logger=logger,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("email_send_failed", step="distribution_email", error=str(exc))
 
     logger.info("digest_completed", step="done", drive_link=drive_link)
     print(str(output_path))

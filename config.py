@@ -52,14 +52,10 @@ class Settings:
     gmail_blocked_senders: list[str]
     gmail_max_threads: int
 
-    news_rss_urls: list[str]
     news_cache_path: str
     news_cache_ttl_seconds: int
-    max_news_items: int
 
     drive_folder_id: str
-    drive_file_name: str
-    drive_overwrite_mode: bool
     digest_calendar_id: str
     digest_event_hour: int
     digest_event_minute: int
@@ -76,10 +72,19 @@ class Settings:
     daily_token_warn_threshold: int
     output_dir: str
 
+    digest_email_to: str
+    weather_latitude: float
+    weather_longitude: float
+    weather_timezone: str
+    weather_city_label: str
+    news_history_path: str
+    digest_counter_path: str
+
     @property
     def google_scopes(self) -> list[str]:
         return [
             "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.send",
             "https://www.googleapis.com/auth/calendar",
             "https://www.googleapis.com/auth/drive.file",
         ]
@@ -112,13 +117,9 @@ def load_settings() -> Settings:
         gmail_excluded_labels=_split_csv(os.getenv("GMAIL_EXCLUDED_LABELS")),
         gmail_blocked_senders=_split_csv(os.getenv("GMAIL_BLOCKED_SENDERS")),
         gmail_max_threads=int(os.getenv("GMAIL_MAX_THREADS", "20")),
-        news_rss_urls=_split_csv(os.getenv("NEWS_RSS_URLS")),
         news_cache_path=os.getenv("NEWS_CACHE_PATH", "/tmp/morning_digest_news_cache.json"),
         news_cache_ttl_seconds=int(os.getenv("NEWS_CACHE_TTL_SECONDS", "43200")),
-        max_news_items=int(os.getenv("MAX_NEWS_ITEMS", "30")),
         drive_folder_id=os.getenv("DRIVE_FOLDER_ID", ""),
-        drive_file_name=os.getenv("DRIVE_FILE_NAME", "Morning Digest - Latest.pdf"),
-        drive_overwrite_mode=_parse_bool(os.getenv("DRIVE_OVERWRITE_MODE"), default=True),
         digest_calendar_id=os.getenv("DIGEST_CALENDAR_ID", "primary"),
         digest_event_hour=int(os.getenv("DIGEST_EVENT_HOUR", "8")),
         digest_event_minute=int(os.getenv("DIGEST_EVENT_MINUTE", "0")),
@@ -132,4 +133,11 @@ def load_settings() -> Settings:
         token_spend_path=os.getenv("TOKEN_SPEND_PATH", "/tmp/morning_digest_token_spend.json"),
         daily_token_warn_threshold=int(os.getenv("DAILY_TOKEN_WARN_THRESHOLD", "50000")),
         output_dir=os.getenv("OUTPUT_DIR", "output"),
+        digest_email_to=os.getenv("DIGEST_EMAIL_TO", "nathanwongshihhao@gmail.com"),
+        weather_latitude=float(os.getenv("WEATHER_LATITUDE", "22.3193")),
+        weather_longitude=float(os.getenv("WEATHER_LONGITUDE", "114.1694")),
+        weather_timezone=os.getenv("WEATHER_TIMEZONE", "Asia/Hong_Kong"),
+        weather_city_label=os.getenv("WEATHER_CITY_LABEL", "Hong Kong"),
+        news_history_path=os.getenv("NEWS_HISTORY_PATH", "/tmp/morning_digest_news_history.json"),
+        digest_counter_path=os.getenv("DIGEST_COUNTER_PATH", "/tmp/morning_digest_counter.json"),
     )

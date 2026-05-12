@@ -49,13 +49,32 @@ class RankedNewsItem(BaseModel):
     category: str = ""
     tag: str = ""
     ai_summary: str = ""
+    is_developing: bool = False
+
+
+class WeatherHour(BaseModel):
+    hour_label: str
+    temperature_c: float
+    feels_like_c: float | None = None
+    precipitation_chance: int = Field(default=0, ge=0, le=100)
+    weather_code: int = 0
+    weather_label: str = ""
+    icon: str = ""
+
+
+class WeatherSnapshot(BaseModel):
+    city: str
+    high_c: float | None = None
+    low_c: float | None = None
+    sunrise: str = ""
+    sunset: str = ""
+    hours: list[WeatherHour] = Field(default_factory=list)
+    summary: str = ""
 
 
 class DigestSummary(BaseModel):
     schedule: list[str] = Field(default_factory=list)
     emails: list[str] = Field(default_factory=list)
-    news: list[str] = Field(default_factory=list)
-    action_items: list[str] = Field(default_factory=list)
 
 
 class CategorizedNews(BaseModel):
@@ -70,3 +89,4 @@ class RawDigestData(BaseModel):
     news: list[NewsItem] = Field(default_factory=list)
     ranked_news: list[RankedNewsItem] = Field(default_factory=list)
     categorized_news: CategorizedNews = Field(default_factory=CategorizedNews)
+    weather: WeatherSnapshot | None = None

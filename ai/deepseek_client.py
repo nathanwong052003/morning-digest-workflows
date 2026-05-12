@@ -11,7 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 from openai import OpenAI
 
 from config import Settings
-from models import DigestSummary, NewsItem, RankedNewsItem
+from models import NewsItem, RankedNewsItem
 from utils.logging import JsonLogger
 from utils.retries import retry_call
 
@@ -464,27 +464,3 @@ class DeepSeekClient:
             if replacement:
                 item.ai_summary = replacement
         return ranked_news
-
-    def summarize(
-        self,
-        *,
-        ranked_news: list[RankedNewsItem],
-    ) -> DigestSummary:
-        payload = {
-            "task": (
-                "Create compact summary for news only. Return JSON with keys exactly: "
-                "news, action_items. Each key must hold an array of short strings."
-            ),
-            "news": [item.model_dump(mode="json") for item in ranked_news[:12]],
-        }
-        result = self._call_json(step="ai_summarize", user_payload=payload)
-        try:
-            summary = DigestSummary(
-                schedule=[],
-                emails=[],
-                news=[str(item) for item in result.get("news", [])],
-                action_items=[str(item) for item in result.get("action_items", [])],
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise DeepSeekError("Failed to normalize DeepSeek summary output.") from exc
-        return summary

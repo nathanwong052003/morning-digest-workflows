@@ -2,8 +2,8 @@ name: Morning Digest
 
 on:
   schedule:
-    # Run at 22:00 UTC daily = 06:00 HKT (Asia/Hong_Kong)
-    - cron: "00 22 * * *"
+    # Run at 23:30 UTC daily = 07:30 HKT (Asia/Hong_Kong)
+    - cron: "30 23 * * *"
   workflow_dispatch:
     inputs:
       mock_mode:
@@ -55,17 +55,27 @@ jobs:
       GMAIL_MAX_THREADS: "20"
 
       # --- News ---
-      NEWS_RSS_URLS: ${{ secrets.NEWS_RSS_URLS }}
-      NEWS_API_URLS_JSON: ${{ secrets.NEWS_API_URLS_JSON }}
       NEWS_CACHE_PATH: /tmp/morning_digest_news_cache.json
       NEWS_CACHE_TTL_SECONDS: "43200"
-      MAX_NEWS_ITEMS: "30"
 
       # --- Distribution ---
       DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
       DIGEST_CALENDAR_ID: ${{ secrets.DIGEST_CALENDAR_ID }}
       DIGEST_EVENT_HOUR: "8"
       DIGEST_EVENT_MINUTE: "0"
+      DIGEST_EMAIL_TO: ${{ secrets.DIGEST_EMAIL_TO }}
+
+      # --- Weather (Hong Kong) ---
+      WEATHER_LATITUDE: "22.3193"
+      WEATHER_LONGITUDE: "114.1694"
+      WEATHER_TIMEZONE: Asia/Hong_Kong
+      WEATHER_CITY_LABEL: Hong Kong
+
+      # --- News history (for developing-story detection) ---
+      NEWS_HISTORY_PATH: /tmp/morning_digest_news_history.json
+
+      # --- Digest iteration counter (increments by 1 each run) ---
+      DIGEST_COUNTER_PATH: /tmp/morning_digest_counter.json
 
       # --- DeepSeek AI ---
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
@@ -121,6 +131,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Restore news history cache
+        id: news_history_cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/morning_digest_news_history.json
+          key: news-history-${{ github.run_id }}
+          restore-keys: |
+            news-history-
+
+      - name: Restore digest counter cache
+        id: digest_counter_cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/morning_digest_counter.json
+          key: digest-counter-${{ github.run_id }}
+          restore-keys: |
+            digest-counter-
+
       - name: Run digest pipeline
         id: digest
         run: python main.py
@@ -161,6 +189,22 @@ jobs:
         with:
           name: token-spend-log
           path: /tmp/morning_digest_token_spend.json
+          if-no-files-found: ignore
+
+      - name: Upload news history artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-history
+          path: /tmp/morning_digest_news_history.json
+          if-no-files-found: ignore
+
+      - name: Upload digest counter artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-counter
+          path: /tmp/morning_digest_counter.json
           if-no-files-found: ignore
 
       - name: Upload generated HTML artifact (debug)

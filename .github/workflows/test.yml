@@ -26,12 +26,9 @@ jobs:
       # --- Mock mode forces no external API calls ---
       MOCK_MODE: "true"
 
-      # --- News (only RSS, no API keys needed) ---
-      NEWS_RSS_URLS: https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml
-      NEWS_API_URLS_JSON: "[]"
+      # --- News ---
       NEWS_CACHE_PATH: /tmp/morning_digest_news_cache.json
       NEWS_CACHE_TTL_SECONDS: "43200"
-      MAX_NEWS_ITEMS: "5"
 
       # --- PDF rendering ---
       # Use ReportLab on CI to avoid WeasyPrint system deps in test runs.
