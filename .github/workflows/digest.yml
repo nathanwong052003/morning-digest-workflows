@@ -142,7 +142,7 @@ jobs:
 
       - name: Restore digest counter cache
         id: digest_counter_cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /tmp/morning_digest_counter.json
           key: digest-counter-${{ github.run_id }}
@@ -153,6 +153,13 @@ jobs:
         id: digest
         run: python main.py
         continue-on-error: true
+
+      - name: Save digest counter cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/morning_digest_counter.json
+          key: digest-counter-${{ github.run_id }}
 
       - name: Check audit log
         id: audit_check
