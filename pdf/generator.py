@@ -123,7 +123,15 @@ def _split_news(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[Ran
             buckets["HONG KONG"][:7],
         )
 
-    # Fallback: use inference-based splitting (mock mode or no categorized data)
+    # No AI ranking, but we have pre-categorized RSS data — use it directly
+    if cat.technology or cat.southeast_asia or cat.hong_kong:
+        return (
+            [_to_ranked(item, "TECHNOLOGY") for item in cat.technology[:7]],
+            [_to_ranked(item, "SOUTHEAST ASIA") for item in cat.southeast_asia[:7]],
+            [_to_ranked(item, "HONG KONG") for item in cat.hong_kong[:7]],
+        )
+
+    # Final fallback: keyword inference (mock mode or all RSS feeds failed)
     return _split_news_fallback(raw_data)
 
 
@@ -480,7 +488,7 @@ def _weather_html(weather: WeatherSnapshot | None) -> str:
             f'{precip_html}'
             f'</div>'
         )
-    cells_html = "".join(cells).rsplit("border-right:1px solid #eee;", 1)[0] + "border-right:none;"
+    cells_html = "border-right:none;".join("".join(cells).rsplit("border-right:1px solid #eee;", 1))
 
     high_low = ""
     if weather.high_c is not None and weather.low_c is not None:
