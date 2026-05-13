@@ -7,6 +7,7 @@ client_secret.json
 /utils/__pycache__
 /output/*.pdf
 /output/*.html
+/output/*.css
 /output/deepseek_requests_*.jsonl
 /collectors/__pycache__
 /auth/__pycache__

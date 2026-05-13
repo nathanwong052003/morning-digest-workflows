@@ -247,15 +247,16 @@ def _weather_html(weather: WeatherSnapshot | None) -> str:
     cells = []
     for i, hour in enumerate(weather.hours):
         is_last = i == len(weather.hours) - 1
-        border = "" if is_last else "border-right:1px solid #eee;"
+        border_right = "border-right:1px solid #eee;" if not is_last else ""
+        border_left = "border-left:1px solid #eee;" if i > 0 else ""
         precip_html = (
-            f'<div style="font-size:10px;color:#999;margin-top:2px;">💧️{hour.precipitation_chance}%</div>'
+            f'<div style="font-size:10px;color:#999;margin-top:2px;">💧{hour.precipitation_chance}%</div>'
             if hour.precipitation_chance >= 20 else ""
         )
         cells.append(
-            f'<div style="flex:1;text-align:center;padding:8px 4px;{border}">'
+            f'<div style="flex:1 1 0%;text-align:center;padding:8px 4px;{border_left}{border_right}">'
             f'<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">{_escape(hour.hour_label)}</div>'
-            f'<div style="font-size:22px;line-height:1.2;margin:4px 0;">{_escape(hour.icon)}</div>'
+            f'<div style="font-size:22px;line-height:1.2;margin:4px 0;font-feature-settings:\'color-colr\';">{_escape(hour.icon)}</div>'
             f'<div style="font-size:15px;font-weight:600;color:#111;">{round(hour.temperature_c)}°</div>'
             f'{precip_html}'
             f'</div>'
