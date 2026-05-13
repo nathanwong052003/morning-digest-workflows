@@ -12,6 +12,20 @@ from models import CalendarEvent, truncate_text
 from utils.logging import JsonLogger
 from utils.retries import retry_call
 
+GOOGLE_CALENDAR_COLORS = {
+    "1": "#46d6db",
+    "2": "#7ae7bf",
+    "3": "#dbadff",
+    "4": "#ffb878",
+    "5": "#fbd75b",
+    "6": "#ff887c",
+    "7": "#a4bdfc",
+    "8": "#e1e1e1",
+    "9": "#5484ed",
+    "10": "#51b749",
+    "11": "#dc2127",
+}
+
 
 def _collect_mock(now_local: datetime) -> list[CalendarEvent]:
     start = datetime.combine(now_local.date(), time(9, 0), now_local.tzinfo)
@@ -24,6 +38,7 @@ def _collect_mock(now_local: datetime) -> list[CalendarEvent]:
             location="Home Office",
             description="Review priorities and blockers.",
             attendees=["self@example.com"],
+            color="#9fe1e9",
         )
     ]
 
@@ -80,6 +95,8 @@ def collect_calendar_events(
             for attendee in item.get("attendees", [])
             if attendee.get("email")
         ]
+        color_id = item.get("colorId", "1")
+        color = GOOGLE_CALENDAR_COLORS.get(color_id, "#9fe1e9")
         normalized.append(
             CalendarEvent(
                 title=item.get("summary", "(No title)"),
@@ -88,6 +105,7 @@ def collect_calendar_events(
                 location=item.get("location", ""),
                 description=truncate_text(item.get("description", ""), limit=500),
                 attendees=attendees,
+                color=color,
             )
         )
 

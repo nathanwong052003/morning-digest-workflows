@@ -21,6 +21,7 @@ class CalendarEvent(BaseModel):
     location: str = ""
     description: str = ""
     attendees: list[str] = Field(default_factory=list)
+    color: str = "#9fe1e9"
 
 
 class GmailThread(BaseModel):
