@@ -474,21 +474,22 @@ def _weather_html(weather: WeatherSnapshot | None) -> str:
     if not weather or not weather.hours:
         return ""
     cells = []
-    for hour in weather.hours[:6]:
+    for i, hour in enumerate(weather.hours):
+        is_last = i == len(weather.hours) - 1
+        border = "" if is_last else "border-right:1px solid #eee;"
         precip_html = (
-            f'<span style="font-size:10px;color:#999;"> 💧{hour.precipitation_chance}%</span>'
+            f'<div style="font-size:10px;color:#999;margin-top:2px;">💧️{hour.precipitation_chance}%</div>'
             if hour.precipitation_chance >= 20 else ""
         )
         cells.append(
-            f'<div style="display:inline-block;width:16%;text-align:center;padding:8px 4px;'
-            f'border-right:1px solid #eee;vertical-align:top;">'
+            f'<div style="flex:1;text-align:center;padding:8px 4px;{border}">'
             f'<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">{_escape(hour.hour_label)}</div>'
             f'<div style="font-size:22px;line-height:1.2;margin:4px 0;">{_escape(hour.icon)}</div>'
             f'<div style="font-size:15px;font-weight:600;color:#111;">{round(hour.temperature_c)}°</div>'
             f'{precip_html}'
             f'</div>'
         )
-    cells_html = "border-right:none;".join("".join(cells).rsplit("border-right:1px solid #eee;", 1))
+    cells_html = "".join(cells)
 
     high_low = ""
     if weather.high_c is not None and weather.low_c is not None:
@@ -507,7 +508,8 @@ def _weather_html(weather: WeatherSnapshot | None) -> str:
     return (
         f'<div style="margin-bottom:16px;">'
         f'<div style="font-size:13px;color:#444;margin-bottom:8px;">{summary_line}</div>'
-        f'<div style="background:#fafaf7;border:1px solid #efefe9;border-radius:8px;padding:4px 0;">'
+        f'<div style="background:#fafaf7;border:1px solid #efefe9;border-radius:8px;padding:4px 0;'
+        f'display:flex;align-items:flex-start;">'
         f'{cells_html}'
         f'</div>'
         f'</div>'

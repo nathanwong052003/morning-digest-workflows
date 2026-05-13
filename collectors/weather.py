@@ -16,37 +16,37 @@ from utils.retries import retry_call
 OPEN_METEO_ENDPOINT = "https://api.open-meteo.com/v1/forecast"
 
 WMO_LABELS: dict[int, tuple[str, str]] = {
-    0: ("Clear sky", "☀"),
-    1: ("Mainly clear", "🌤"),
-    2: ("Partly cloudy", "⛅"),
-    3: ("Overcast", "☁"),
-    45: ("Fog", "🌫"),
-    48: ("Depositing rime fog", "🌫"),
-    51: ("Light drizzle", "🌦"),
-    53: ("Moderate drizzle", "🌦"),
-    55: ("Dense drizzle", "🌧"),
-    56: ("Light freezing drizzle", "🌧"),
-    57: ("Dense freezing drizzle", "🌧"),
-    61: ("Light rain", "🌦"),
-    63: ("Moderate rain", "🌧"),
-    65: ("Heavy rain", "🌧"),
-    66: ("Light freezing rain", "🌧"),
-    67: ("Heavy freezing rain", "🌧"),
-    71: ("Light snow", "🌨"),
-    73: ("Moderate snow", "🌨"),
-    75: ("Heavy snow", "❄"),
-    77: ("Snow grains", "❄"),
-    80: ("Light showers", "🌦"),
-    81: ("Moderate showers", "🌧"),
-    82: ("Violent showers", "⛈"),
-    85: ("Light snow showers", "🌨"),
-    86: ("Heavy snow showers", "🌨"),
-    95: ("Thunderstorm", "⛈"),
-    96: ("Thunderstorm w/ hail", "⛈"),
-    99: ("Severe thunderstorm", "⛈"),
+    0: ("Clear sky", "☀️"),
+    1: ("Mainly clear", "🌤️"),
+    2: ("Partly cloudy", "⛅️"),
+    3: ("Overcast", "☁️"),
+    45: ("Fog", "🌫️"),
+    48: ("Depositing rime fog", "🌫️"),
+    51: ("Light drizzle", "🌦️"),
+    53: ("Moderate drizzle", "🌦️"),
+    55: ("Dense drizzle", "🌧️"),
+    56: ("Light freezing drizzle", "🌧️"),
+    57: ("Dense freezing drizzle", "🌧️"),
+    61: ("Light rain", "🌦️"),
+    63: ("Moderate rain", "🌧️"),
+    65: ("Heavy rain", "🌧️"),
+    66: ("Light freezing rain", "🌧️"),
+    67: ("Heavy freezing rain", "🌧️"),
+    71: ("Light snow", "🌨️"),
+    73: ("Moderate snow", "🌨️"),
+    75: ("Heavy snow", "❄️"),
+    77: ("Snow grains", "❄️"),
+    80: ("Light showers", "🌦️"),
+    81: ("Moderate showers", "🌧️"),
+    82: ("Violent showers", "⛈️"),
+    85: ("Light snow showers", "🌨️"),
+    86: ("Heavy snow showers", "🌨️"),
+    95: ("Thunderstorm", "⛈️"),
+    96: ("Thunderstorm w/ hail", "⛈️"),
+    99: ("Severe thunderstorm", "⛈️"),
 }
 
-KEY_HOURS = (7, 12, 17, 21)
+KEY_HOURS = (7, 10, 13, 16, 19, 22)
 
 
 def _label_for(code: int) -> tuple[str, str]:
@@ -70,9 +70,6 @@ def _format_clock(value: str | None, tz: ZoneInfo) -> str:
         dt = dt.replace(tzinfo=tz)
     else:
         dt = dt.astimezone(tz)
-    if dt.minute == 0:
-        return _format_hour(dt.hour)
-    # Manual formatting avoids platform-dependent %-I / %-H strftime codes.
     suffix = "am" if dt.hour < 12 else "pm"
     h = dt.hour % 12 or 12
     return f"{h}:{dt.minute:02d}{suffix}"
@@ -80,17 +77,19 @@ def _format_clock(value: str | None, tz: ZoneInfo) -> str:
 
 def _build_mock() -> WeatherSnapshot:
     hours = [
-        WeatherHour(hour_label="7am", temperature_c=23.0, feels_like_c=23.5, precipitation_chance=10, weather_code=1, weather_label="Mainly clear", icon="🌤"),
-        WeatherHour(hour_label="12pm", temperature_c=27.5, feels_like_c=29.0, precipitation_chance=20, weather_code=2, weather_label="Partly cloudy", icon="⛅"),
-        WeatherHour(hour_label="5pm", temperature_c=28.0, feels_like_c=30.0, precipitation_chance=30, weather_code=3, weather_label="Overcast", icon="☁"),
-        WeatherHour(hour_label="9pm", temperature_c=25.0, feels_like_c=25.5, precipitation_chance=10, weather_code=1, weather_label="Mainly clear", icon="🌤"),
+        WeatherHour(hour_label="7am",  temperature_c=23.0, feels_like_c=23.5, precipitation_chance=5,  weather_code=1, weather_label="Mainly clear",  icon="🌤️"),
+        WeatherHour(hour_label="10am", temperature_c=26.0, feels_like_c=27.0, precipitation_chance=10, weather_code=2, weather_label="Partly cloudy", icon="⛅️"),
+        WeatherHour(hour_label="1pm",  temperature_c=28.5, feels_like_c=30.5, precipitation_chance=20, weather_code=2, weather_label="Partly cloudy", icon="⛅️"),
+        WeatherHour(hour_label="4pm",  temperature_c=28.0, feels_like_c=30.0, precipitation_chance=30, weather_code=3, weather_label="Overcast",       icon="☁️"),
+        WeatherHour(hour_label="7pm",  temperature_c=26.5, feels_like_c=27.5, precipitation_chance=15, weather_code=1, weather_label="Mainly clear",  icon="🌤️"),
+        WeatherHour(hour_label="10pm", temperature_c=24.5, feels_like_c=25.0, precipitation_chance=5,  weather_code=0, weather_label="Clear sky",      icon="☀️"),
     ]
     return WeatherSnapshot(
         city="Hong Kong",
         high_c=29.0,
         low_c=22.0,
-        sunrise="6am",
-        sunset="7pm",
+        sunrise="6:04am",
+        sunset="7:09pm",
         hours=hours,
         summary="Partly cloudy through the day; high 29°C.",
     )

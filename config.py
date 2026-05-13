@@ -139,5 +139,5 @@ def load_settings() -> Settings:
         weather_timezone=os.getenv("WEATHER_TIMEZONE", "Asia/Hong_Kong"),
         weather_city_label=os.getenv("WEATHER_CITY_LABEL", "Hong Kong"),
         news_history_path=os.getenv("NEWS_HISTORY_PATH", "/tmp/morning_digest_news_history.json"),
-        digest_counter_path=os.getenv("DIGEST_COUNTER_PATH", "/tmp/morning_digest_counter.json"),
+        digest_counter_path=os.getenv("DIGEST_COUNTER_PATH", ".persistent/digest_counter.json"),
     )

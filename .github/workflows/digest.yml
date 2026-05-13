@@ -74,8 +74,8 @@ jobs:
       # --- News history (for developing-story detection) ---
       NEWS_HISTORY_PATH: /tmp/morning_digest_news_history.json
 
-      # --- Digest iteration counter (increments by 1 each run) ---
-      DIGEST_COUNTER_PATH: /tmp/morning_digest_counter.json
+      # --- Digest iteration counter (increments by 1 each run, persisted in repo) ---
+      DIGEST_COUNTER_PATH: .persistent/digest_counter.json
 
       # --- DeepSeek AI ---
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
@@ -140,26 +140,23 @@ jobs:
           restore-keys: |
             news-history-
 
-      - name: Restore digest counter cache
-        id: digest_counter_cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /tmp/morning_digest_counter.json
-          key: digest-counter-${{ github.run_id }}
-          restore-keys: |
-            digest-counter-
-
       - name: Run digest pipeline
         id: digest
         run: python main.py
         continue-on-error: true
 
-      - name: Save digest counter cache
+      - name: Commit digest counter
         if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: /tmp/morning_digest_counter.json
-          key: digest-counter-${{ github.run_id }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet .persistent/digest_counter.json; then
+            echo "Counter unchanged, skipping commit"
+          else
+            git add .persistent/digest_counter.json
+            git commit -m "Update digest counter [skip ci]" || true
+            git push || true
+          fi
 
       - name: Check audit log
         id: audit_check
@@ -206,13 +203,6 @@ jobs:
           path: /tmp/morning_digest_news_history.json
           if-no-files-found: ignore
 
-      - name: Upload digest counter artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: digest-counter
-          path: /tmp/morning_digest_counter.json
-          if-no-files-found: ignore
 
       - name: Upload generated HTML artifact (debug)
         if: always()

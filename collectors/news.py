@@ -467,20 +467,24 @@ def _normalize(rows: list[dict[str, Any]]) -> list[NewsItem]:
 
 def _collect_mock() -> list[NewsItem]:
     return [
-        NewsItem(
-            title="DeepSeek releases optimization update",
-            url="https://example.com/deepseek-update",
-            source="example.com",
-            published_at=datetime.utcnow(),
-            snippet="DeepSeek introduced lower-cost inference optimizations for daily workflows.",
-        ),
-        NewsItem(
-            title="Cloud platform launches new scheduler",
-            url="https://example.com/cloud-scheduler",
-            source="example.com",
-            published_at=datetime.utcnow(),
-            snippet="A new scheduler API improves cron reliability for GitHub Action pipelines.",
-        ),
+        NewsItem(title="DeepSeek releases optimization update", url="https://example.com/deepseek-update", source="example.com", published_at=datetime.utcnow(), snippet="DeepSeek introduced lower-cost inference optimizations for daily workflows."),
+        NewsItem(title="Cloud platform launches new scheduler", url="https://example.com/cloud-scheduler", source="example.com", published_at=datetime.utcnow(), snippet="A new scheduler API improves cron reliability for GitHub Action pipelines."),
+    ]
+
+
+def _collect_mock_sea() -> list[NewsItem]:
+    return [
+        NewsItem(title="Singapore unveils expanded digital trade framework with ASEAN partners", url="https://example.com/sg-digital-trade", source="The Straits Times", published_at=datetime.utcnow(), snippet="Singapore signed a new digital economy agreement covering cross-border data flows and e-commerce standards with six ASEAN member states."),
+        NewsItem(title="Vietnam posts record Q1 exports as manufacturing diversification accelerates", url="https://example.com/vietnam-exports", source="Reuters", published_at=datetime.utcnow(), snippet="Vietnam's export figures hit a quarterly record, driven by electronics and textiles as global firms continue shifting supply chains away from China."),
+        NewsItem(title="Indonesia raises interest rates to defend rupiah amid dollar strength", url="https://example.com/indonesia-rates", source="Bloomberg", published_at=datetime.utcnow(), snippet="Bank Indonesia lifted its benchmark rate by 25 basis points, citing pressure on the rupiah and rising import costs as the Fed holds rates steady."),
+    ]
+
+
+def _collect_mock_hk() -> list[NewsItem]:
+    return [
+        NewsItem(title="Hong Kong Monetary Authority holds base rate as Fed signals extended pause", url="https://example.com/hkma-rate", source="South China Morning Post", published_at=datetime.utcnow(), snippet="The HKMA kept its base rate unchanged following the Federal Reserve's decision to hold, with officials noting Hong Kong's economy remains resilient."),
+        NewsItem(title="Hang Seng Index climbs 1.4% on mainland stimulus optimism", url="https://example.com/hang-seng-rally", source="Reuters", published_at=datetime.utcnow(), snippet="Hong Kong equities rose broadly after Beijing signalled additional fiscal measures to support domestic consumption, lifting financials and property stocks."),
+        NewsItem(title="Government launches HK$2 billion tech hub fund targeting deep-tech startups", url="https://example.com/hk-tech-fund", source="HK Free Press", published_at=datetime.utcnow(), snippet="Hong Kong's Innovation and Technology Bureau announced a new co-investment fund aimed at attracting AI, biotech, and semiconductor startups to the city."),
     ]
 
 
@@ -492,14 +496,16 @@ def collect_news_by_category(*, settings: Settings, logger: JsonLogger) -> dict[
     """
     step_start = perf_counter()
     if settings.mock_mode:
-        items = _collect_mock()
+        tech = _collect_mock()
+        sea = _collect_mock_sea()
+        hk = _collect_mock_hk()
         logger.info(
             "news_collected_mock",
             step="news",
-            item_count=len(items),
+            item_count=len(tech) + len(sea) + len(hk),
             latency=perf_counter() - step_start,
         )
-        return {"TECHNOLOGY": items, "SOUTHEAST ASIA": [], "HONG KONG": []}
+        return {"TECHNOLOGY": tech, "SOUTHEAST ASIA": sea, "HONG KONG": hk}
 
     cache_path = Path(settings.news_cache_path)
     cache = _read_cache(cache_path)
