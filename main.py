@@ -13,7 +13,7 @@ from config import Settings, load_settings
 from distribution.calendar_event import create_digest_calendar_event
 from distribution.drive import upload_pdf_to_drive
 from distribution.email import send_digest_email
-from models import CategorizedNews, DigestSummary, RankedNewsItem, RawDigestData
+from models import CategorizedNews, DigestSummary, RankedCategorizedNews, RankedNewsItem, RawDigestData
 from pdf.generator import generate_digest_pdf
 from utils.digest_counter import next_iteration
 from utils.logging import JsonLogger
@@ -91,7 +91,7 @@ def run(settings: Settings) -> int:
         try:
             deepseek = DeepSeekClient(settings=settings, logger=logger)
 
-            # Query AI separately for each category
+            ranked_by_cat: dict[str, list[RankedNewsItem]] = {}
             all_ranked: list[RankedNewsItem] = []
             for cat_name, cat_items in [
                 ("TECHNOLOGY", categorized_news.get("TECHNOLOGY", [])),
@@ -102,12 +102,16 @@ def run(settings: Settings) -> int:
                     continue
                 cat_ranked = deepseek.rank_news(cat_items, category=cat_name)
                 cat_ranked = deepseek.refine_news_summaries(cat_ranked)
+                ranked_by_cat[cat_name] = cat_ranked
                 all_ranked.extend(cat_ranked)
 
-            # Sort globally by relevance for the summary
             all_ranked.sort(key=lambda item: item.relevance, reverse=True)
-            ranked_news = all_ranked
-            raw_data.ranked_news = ranked_news
+            raw_data.ranked_news = all_ranked
+            raw_data.ranked_categorized_news = RankedCategorizedNews(
+                technology=ranked_by_cat.get("TECHNOLOGY", []),
+                southeast_asia=ranked_by_cat.get("SOUTHEAST ASIA", []),
+                hong_kong=ranked_by_cat.get("HONG KONG", []),
+            )
             summary = build_fallback_summary(raw_data)
             if deepseek.is_budget_exceeded():
                 warning_banner = "⚠️ AI unavailable: token budget exceeded. Raw fallback used."

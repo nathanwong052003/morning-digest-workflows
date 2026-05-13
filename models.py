@@ -83,10 +83,17 @@ class CategorizedNews(BaseModel):
     hong_kong: list[NewsItem] = Field(default_factory=list)
 
 
+class RankedCategorizedNews(BaseModel):
+    technology: list[RankedNewsItem] = Field(default_factory=list)
+    southeast_asia: list[RankedNewsItem] = Field(default_factory=list)
+    hong_kong: list[RankedNewsItem] = Field(default_factory=list)
+
+
 class RawDigestData(BaseModel):
     calendar: list[CalendarEvent] = Field(default_factory=list)
     emails: list[GmailThread] = Field(default_factory=list)
     news: list[NewsItem] = Field(default_factory=list)
     ranked_news: list[RankedNewsItem] = Field(default_factory=list)
     categorized_news: CategorizedNews = Field(default_factory=CategorizedNews)
+    ranked_categorized_news: RankedCategorizedNews = Field(default_factory=RankedCategorizedNews)
     weather: WeatherSnapshot | None = None

@@ -4,10 +4,8 @@ import html
 import re
 from datetime import date, datetime, time, timezone, timedelta
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
-
 from build_digest_pdf import convert as convert_html_to_pdf
-from models import CategorizedNews, DigestSummary, NewsItem, RankedNewsItem, RawDigestData, WeatherSnapshot
+from models import DigestSummary, NewsItem, RankedNewsItem, RawDigestData, WeatherSnapshot
 
 
 def _escape(text: str) -> str:
@@ -38,101 +36,18 @@ def _clean_display_text(text: str) -> str:
     return cleaned
 
 
-def _normalize_news_url(raw_url: str) -> str:
-    stripped = (raw_url or "").strip()
-    if not stripped:
-        return ""
-    parts = urlsplit(stripped)
-    query_pairs = []
-    for key, value in parse_qsl(parts.query, keep_blank_values=False):
-        lowered = key.lower()
-        if lowered.startswith("utm_") or lowered in {
-            "gclid",
-            "fbclid",
-            "igshid",
-            "mc_cid",
-            "mc_eid",
-            "ref",
-            "ref_src",
-        }:
-            continue
-        query_pairs.append((key, value))
-    query_pairs.sort(key=lambda row: row[0].lower())
-    normalized = parts._replace(
-        scheme=parts.scheme.lower(),
-        netloc=parts.netloc.lower(),
-        path=(parts.path.rstrip("/") or "/"),
-        query=urlencode(query_pairs, doseq=True),
-        fragment="",
-    )
-    return urlunsplit(normalized)
-
-
-def _news_identity(*, title: str, url: str) -> str:
-    normalized_url = _normalize_news_url(url)
-    if normalized_url:
-        return f"url:{normalized_url}"
-    title_key = re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
-    return f"title:{title_key}"
-
-
 def _split_news(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[RankedNewsItem], list[RankedNewsItem]]:
-    """Extract per-category news from the pre-split categorized data.
-
-    Each category's items come directly from the AI, already ranked and summarized
-    for that specific category. Falls back to inference-based splitting when
-    categorized data is empty (e.g., mock mode).
-    """
+    rcat = raw_data.ranked_categorized_news
     cat = raw_data.categorized_news
 
-    # If we have AI-ranked news, use categorized_news to pick the right items
-    if raw_data.ranked_news and (cat.technology or cat.southeast_asia or cat.hong_kong):
-        # Build lookup by URL to match ranked items back to their categories
-        cat_urls: dict[str, str] = {}
-        for item in cat.technology:
-            cat_urls[str(item.url)] = "TECHNOLOGY"
-        for item in cat.southeast_asia:
-            cat_urls[str(item.url)] = "SOUTHEAST ASIA"
-        for item in cat.hong_kong:
-            cat_urls[str(item.url)] = "HONG KONG"
+    if rcat.technology or rcat.southeast_asia or rcat.hong_kong:
+        return (rcat.technology[:7], rcat.southeast_asia[:7], rcat.hong_kong[:7])
 
-        buckets: dict[str, list[RankedNewsItem]] = {
-            "TECHNOLOGY": [],
-            "SOUTHEAST ASIA": [],
-            "HONG KONG": [],
-        }
-        seen_keys: set[str] = set()
-
-        for row in raw_data.ranked_news:
-            url = str(row.url)
-            category = cat_urls.get(url, row.category if row.category in buckets else "")
-            if not category or category not in buckets:
-                continue
-            max_items = 7
-            if len(buckets[category]) >= max_items:
-                continue
-            key = _news_identity(title=row.title, url=url)
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            buckets[category].append(row)
-
-        return (
-            buckets["TECHNOLOGY"][:7],
-            buckets["SOUTHEAST ASIA"][:7],
-            buckets["HONG KONG"][:7],
-        )
-
-    # No AI ranking, but we have pre-categorized RSS data — use it directly
-    if cat.technology or cat.southeast_asia or cat.hong_kong:
-        return (
-            [_to_ranked(item, "TECHNOLOGY") for item in cat.technology[:7]],
-            [_to_ranked(item, "SOUTHEAST ASIA") for item in cat.southeast_asia[:7]],
-            [_to_ranked(item, "HONG KONG") for item in cat.hong_kong[:7]],
-        )
-
-    # Final fallback: keyword inference (mock mode or all RSS feeds failed)
-    return _split_news_fallback(raw_data)
+    return (
+        [_to_ranked(item, "TECHNOLOGY") for item in cat.technology[:7]],
+        [_to_ranked(item, "SOUTHEAST ASIA") for item in cat.southeast_asia[:7]],
+        [_to_ranked(item, "HONG KONG") for item in cat.hong_kong[:7]],
+    )
 
 
 def _parse_schedule_line(line: str) -> tuple[str, str]:
@@ -225,100 +140,6 @@ def _inbox_label(text: str) -> str:
     return "BRIEFING"
 
 
-def _infer_category(item: RankedNewsItem | NewsItem) -> str:
-    haystack = f"{item.title} {item.snippet} {item.source}".lower()
-    # Check TECHNOLOGY keywords FIRST so cybersecurity, AI, etc. don't get
-    # miscategorized into geography buckets just because they mention a location.
-    tech_tokens = (
-        "ai",
-        "artificial intelligence",
-        "cyber",
-        "cybersecurity",
-        "security alert",
-        "breach",
-        "vulnerability",
-        "malware",
-        "ransomware",
-        "software",
-        "hardware",
-        "cloud",
-        "developer",
-        "openai",
-        "anthropic",
-        "deepseek",
-        "llm",
-        "machine learning",
-        "github",
-        "microsoft",
-        "apple",
-        "google",
-        "nasa",
-        "spacex",
-        "rocket",
-        "satellite",
-        "robot",
-        "startup",
-        "encryption",
-        "data",
-        "algorithm",
-        "blockchain",
-        "quantum",
-        "chip",
-        "semiconductor",
-        "nvidia",
-        "intel",
-        "amd",
-        "tsmc",
-        "5g",
-        "6g",
-        "internet",
-        "server",
-        "database",
-        "api",
-        "sdk",
-        "framework",
-        "python",
-        "javascript",
-        "rust",
-        "docker",
-        "kubernetes",
-        "linux",
-        "windows",
-        "macos",
-        "iphone",
-        "android",
-        "samsung",
-        "tesla",
-        "meta",
-        "amazon",
-        "aws",
-        "azure",
-        "gcp",
-    )
-    if any(token in haystack for token in tech_tokens):
-        return "TECHNOLOGY"
-    if any(token in haystack for token in ("hong kong", " hk ", "hk$", "hang seng", "legco", "hksar", "rthk", "hong kong free press", "the standard", "ming pao", "hk01", "ej insight")):
-        return "HONG KONG"
-    sea_tokens = (
-        "southeast asia",
-        "asean",
-        "vietnam",
-        "malaysia",
-        "singapore",
-        "indonesia",
-        "thailand",
-        "philippines",
-        "cambodia",
-        "laos",
-        "myanmar",
-        "brunei",
-        "timor-leste",
-    )
-    if any(token in haystack for token in sea_tokens):
-        return "SOUTHEAST ASIA"
-    return "TECHNOLOGY"
-
-
 def _infer_tag(item: RankedNewsItem | NewsItem) -> str:
     """Infer a specific tag from the item's title, snippet, and source."""
     haystack = f"{item.title} {item.snippet} {item.source}".lower()
@@ -379,56 +200,6 @@ def _to_ranked(item: NewsItem, category: str) -> RankedNewsItem:
         category=category,
         tag=tag,
         ai_summary="",
-    )
-
-
-def _split_news_fallback(raw_data: RawDigestData) -> tuple[list[RankedNewsItem], list[RankedNewsItem], list[RankedNewsItem]]:
-    """Fallback splitting using inference when categorized data is unavailable."""
-    ranked = list(raw_data.ranked_news[:30])
-
-    buckets: dict[str, list[RankedNewsItem]] = {
-        "TECHNOLOGY": [],
-        "SOUTHEAST ASIA": [],
-        "HONG KONG": [],
-    }
-    seen_keys: set[str] = set()
-
-    def _add_to_bucket(category: str, row: RankedNewsItem, *, force: bool = False) -> bool:
-        max_items = 7
-        if category not in buckets or len(buckets[category]) >= max_items:
-            return False
-        key = _news_identity(title=row.title, url=str(row.url))
-        if not force and key in seen_keys:
-            return False
-        seen_keys.add(key)
-        buckets[category].append(row)
-        return True
-
-    # AI-assigned categories take precedence. Only fall back to _infer_category()
-    # when the AI did not assign a recognized category.
-    for row in ranked:
-        category = row.category if row.category in buckets else _infer_category(row)
-        _add_to_bucket(category, row)
-
-    for item in raw_data.news:
-        inferred = _infer_category(item)
-        _add_to_bucket(inferred, _to_ranked(item, inferred))
-
-    # Ensure each section is fully populated by force-assigning remaining slots
-    # from the full news pool, bypassing seen_keys dedup so items already placed
-    # in one category can also fill another.
-    for category in ("TECHNOLOGY", "SOUTHEAST ASIA", "HONG KONG"):
-        max_items = 7
-        if len(buckets[category]) >= max_items:
-            continue
-        for item in raw_data.news:
-            if _add_to_bucket(category, _to_ranked(item, category), force=True) and len(buckets[category]) >= max_items:
-                break
-
-    return (
-        buckets["TECHNOLOGY"][:7],
-        buckets["SOUTHEAST ASIA"][:7],
-        buckets["HONG KONG"][:7],
     )
 
 

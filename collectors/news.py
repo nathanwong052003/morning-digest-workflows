@@ -89,11 +89,9 @@ CATEGORY_RSS_FEEDS: dict[str, tuple[str, ...]] = {
     ),
     "SOUTHEAST ASIA": (
         "https://news.google.com/rss/search?q=(Southeast+Asia+OR+ASEAN+OR+Singapore+OR+Indonesia+OR+Malaysia+OR+Thailand+OR+Philippines+OR+Vietnam)+when:2d&hl=en-US&gl=US&ceid=US:en",
-        "https://news.google.com/rss/search?q=(Southeast+Asia+OR+ASEAN)+when:2d+(source:Reuters+OR+source:AP+OR+source:Bloomberg+OR+source:Financial+Times+OR+source:Nikkei+Asia+OR+source:Channel+NewsAsia+OR+source:Bangkok+Post+OR+source:Philippine+Star+OR+source:Jakarta+Post+OR+source:The+Straits+Times+OR+source:South+China+Morning+Post)&hl=en-US&gl=US&ceid=US:en",
     ),
     "HONG KONG": (
         "https://news.google.com/rss/search?q=(Hong+Kong+OR+HKSAR+OR+LegCo+OR+Hang+Seng)+when:2d&hl=en-US&gl=US&ceid=US:en",
-        "https://news.google.com/rss/search?q=(Hong+Kong+OR+HKSAR)+when:2d+(source:Reuters+OR+source:AP+OR+source:Bloomberg+OR+source:Financial+Times+OR+source:South+China+Morning+Post+OR+source:RTHK+OR+source:Hong+Kong+Free+Press+OR+source:Wall+Street+Journal)&hl=en-US&gl=US&ceid=US:en",
         "https://news.google.com/rss/search?q=(Hong+Kong+economy+OR+Hong+Kong+property+OR+Hong+Kong+finance+OR+Hong+Kong+stock+market)+when:2d&hl=en-US&gl=US&ceid=US:en",
         "https://news.google.com/rss/search?q=(Hong+Kong+OR+Hong+Kong+technology+OR+Hong+Kong+startup+OR+Hong+Kong+business)+when:2d&hl=en-US&gl=US&ceid=US:en",
         "https://news.google.com/rss/search?q=(Hong+Kong+politics+OR+Hong+Kong+policy+OR+Hong+Kong+government+OR+Hong+Kong+regulation)+when:2d&hl=en-US&gl=US&ceid=US:en",
