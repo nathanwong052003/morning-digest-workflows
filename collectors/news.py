@@ -296,11 +296,7 @@ def _extract_summary_links(entry: dict[str, Any]) -> list[str]:
 def _resolve_source_url(entry: dict[str, Any], raw_url: str) -> str:
     candidates: list[str] = []
     candidates.append(raw_url)
-    source_obj = entry.get("source")
-    if isinstance(source_obj, dict):
-        source_href = str(source_obj.get("href", "")).strip()
-        if source_href:
-            candidates.append(source_href)
+    # source.href in Google News RSS is the outlet homepage, not the article URL — skip it
     raw_links = entry.get("links")
     if isinstance(raw_links, list):
         for link_row in raw_links:

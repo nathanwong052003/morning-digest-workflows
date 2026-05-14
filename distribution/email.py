@@ -57,6 +57,7 @@ def _greeting(now: datetime) -> str:
 def _weather_block(weather: WeatherSnapshot | None) -> str:
     if not weather or not weather.hours:
         return ""
+    cell_width_pct = 100 // len(weather.hours) if weather.hours else 25
     cells = []
     for hour in weather.hours:
         precip_html = (
@@ -64,7 +65,7 @@ def _weather_block(weather: WeatherSnapshot | None) -> str:
             if hour.precipitation_chance >= 20 else ""
         )
         cells.append(
-            f'<td align="center" style="padding:14px 6px;width:25%;border-right:1px solid #f0f0f0;">'
+            f'<td align="center" style="padding:14px 6px;width:{cell_width_pct}%;border-right:1px solid #f0f0f0;">'
             f'<div style="font-size:11px;font-weight:600;color:#888;letter-spacing:0.04em;text-transform:uppercase;">{_esc(hour.hour_label)}</div>'
             f'<div style="font-size:24px;line-height:1.1;margin:6px 0 4px 0;">{_esc(hour.icon)}</div>'
             f'<div style="font-size:16px;font-weight:600;color:#111;">{round(hour.temperature_c)}°</div>'
@@ -197,6 +198,13 @@ def _news_block(ranked_news: list[RankedNewsItem]) -> str:
     return "".join(_news_item(item) for item in items)
 
 
+def _resolve_email_news(raw_data: RawDigestData) -> list[RankedNewsItem]:
+    if raw_data.ranked_news:
+        return raw_data.ranked_news
+    rcat = raw_data.ranked_categorized_news
+    return rcat.technology + rcat.southeast_asia + rcat.hong_kong
+
+
 def _warning_banner(warning_banner: str | None) -> str:
     if not warning_banner:
         return ""
@@ -234,7 +242,7 @@ def _render_html(
         .replace("{{SCHEDULE_BLOCK_HTML}}", _schedule_block(raw_data, summary))
         .replace("{{INBOX_BLOCK_HTML}}", _inbox_block(raw_data, summary))
         .replace("{{DEVELOPING_BLOCK_HTML}}", _developing_block(developing))
-        .replace("{{NEWS_BLOCK_HTML}}", _news_block(raw_data.ranked_news))
+        .replace("{{NEWS_BLOCK_HTML}}", _news_block(_resolve_email_news(raw_data)))
     )
 
 

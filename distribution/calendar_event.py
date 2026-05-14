@@ -36,7 +36,7 @@ def _build_event_description(summary: DigestSummary, raw_data: RawDigestData, di
         weather_block = "(No weather data)"
 
     inbox_lines = summary.emails or [f"{email.sender} — {email.subject}" for email in raw_data.emails[:10]]
-    inbox_block = "\n".join(inbox_lines[:10]) if inbox_lines else "(No priority emails)"
+    inbox_block = "\n".join(f"• {line}" for line in inbox_lines[:10]) if inbox_lines else "(No priority emails)"
 
     if raw_data.ranked_news:
         top_stories = [f"• {item.title}" for item in raw_data.ranked_news[:4]]
