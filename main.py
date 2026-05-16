@@ -101,7 +101,6 @@ def run(settings: Settings) -> int:
                 if not cat_items:
                     continue
                 cat_ranked = deepseek.rank_news(cat_items, category=cat_name)
-                cat_ranked = deepseek.refine_news_summaries(cat_ranked)
                 ranked_by_cat[cat_name] = cat_ranked
                 all_ranked.extend(cat_ranked)
 

@@ -301,10 +301,11 @@ class DeepSeekClient:
         *,
         category: str = "TECHNOLOGY",
     ) -> list[RankedNewsItem]:
-        """Rank news items for a specific category.
+        """Rank news items with two-pass approach: short summaries first, then expand top items.
 
-        The category is pre-determined (from RSS feed grouping), so the AI only
-        needs to rank relevance and assign a tag + summary — no category guessing needed.
+        Pass 1: Rank items with brief 1-2 sentence summaries to identify relevance.
+        Pass 2: Expand top 5-7 items to full detailed summaries.
+        This cuts costs by ~50% vs. detailed summaries for all items.
         """
         if not news_items:
             return []
@@ -316,30 +317,24 @@ class DeepSeekClient:
             "HONG KONG": "Finance, Society, Policy, Business, Security, Culture, Education",
         }
         tags = tags_by_category.get(category, "News")
-        summary_length = (
-            "3-4 detailed complete sentences providing substantive context and detail"
-            if category in ("SOUTHEAST ASIA", "HONG KONG")
-            else "2-3 detailed complete sentences providing substantive information"
-        )
 
         indexed_news = list(enumerate(news_items))
+        # Pass 1: Rank with brief summaries (1-2 sentences) — reduces items from 30 to 15 for ranking
         payload = {
             "task": (
-                f"Rank each {category_lower} news item for today's relevance. "
-                "Return JSON with key 'ranked_news' containing list of "
-                "{item_id,title,url,relevance,reason,tag,summary}. "
-                "Use the exact item_id provided in input. relevance is integer 0-100. "
-                f"Tags for this category: {tags}. "
-                f"summary must be {summary_length}. "
-                "Never end mid-sentence. Do not include ellipsis. "
-                "Do NOT mention the news source or publication name in the summary text."
+                f"Rank {category_lower} news by relevance. "
+                "Return JSON with key 'ranked_news' containing [{item_id,title,url,relevance,reason,tag,summary}]. "
+                f"Tags: {tags}. "
+                "Summary: 1-2 sentences, brief. "
+                "Relevance: 0-100 integer. "
+                "Do not mention the source name."
             ),
             "news": [
                 {
                     "item_id": f"news_{idx}",
                     **item.model_dump(mode="json"),
                 }
-                for idx, item in indexed_news[:30]
+                for idx, item in indexed_news[:15]
             ],
         }
         result = self._call_json(step=f"ai_rank_{category_lower}", user_payload=payload)
@@ -414,6 +409,48 @@ class DeepSeekClient:
                 )
             )
         ranked_items.sort(key=lambda item: item.relevance, reverse=True)
+
+        # Pass 2: Expand top 5-7 items to detailed summaries
+        top_count = 5 if category == "TECHNOLOGY" else 6
+        top_items = ranked_items[:top_count]
+        if top_items:
+            summary_length = (
+                "3-4 detailed sentences with context and detail"
+                if category in ("SOUTHEAST ASIA", "HONG KONG")
+                else "2-3 detailed sentences"
+            )
+            expand_payload = {
+                "task": (
+                    "Expand these summaries to detailed form. "
+                    "Return JSON with key 'summaries' containing [{item_id,summary}]. "
+                    f"Summary: {summary_length}. Complete sentences, no ellipsis. "
+                    "Do not mention the source name."
+                ),
+                "items": [
+                    {
+                        "item_id": f"top_{idx}",
+                        "title": item.title,
+                        "snippet": item.snippet,
+                        "current_summary": item.ai_summary,
+                    }
+                    for idx, item in enumerate(top_items)
+                ],
+            }
+            expand_result = self._call_json(step=f"ai_expand_{category_lower}", user_payload=expand_payload)
+            summaries_raw = expand_result.get("summaries", [])
+            if isinstance(summaries_raw, list):
+                summary_map: dict[str, str] = {}
+                for row in summaries_raw:
+                    if isinstance(row, dict):
+                        item_id = str(row.get("item_id", ""))
+                        summary = str(row.get("summary", "")).strip()
+                        if item_id and summary:
+                            summary_map[item_id] = summary
+                for idx, item in enumerate(top_items):
+                    expanded = summary_map.get(f"top_{idx}", "").strip()
+                    if expanded:
+                        item.ai_summary = expanded
+
         return ranked_items
 
     def refine_news_summaries(self, ranked_news: list[RankedNewsItem]) -> list[RankedNewsItem]:
