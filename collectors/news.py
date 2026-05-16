@@ -3,14 +3,14 @@ from __future__ import annotations
 import html
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any
-from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
-import feedparser
 import requests
 from pydantic import ValidationError
 
@@ -19,13 +19,16 @@ from models import NewsItem, truncate_text
 from utils.logging import JsonLogger
 from utils.retries import retry_call
 
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 CATEGORY_TARGET_MAX = 12
 
+BRAVE_NEWS_URL = "https://api.search.brave.com/res/v1/news/search"
 
-def _source_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
-
+CATEGORY_QUERIES: dict[str, str] = {
+    "TECHNOLOGY": "technology AI cybersecurity software hardware robotics innovation",
+    "HONG KONG": "Hong Kong news economy finance policy",
+    "SOUTHEAST ASIA": "Southeast Asia ASEAN Singapore Indonesia Malaysia Thailand Philippines Vietnam",
+}
 
 SOURCE_ALIASES: dict[str, str] = {
     "associated press": "AP",
@@ -54,148 +57,12 @@ SOURCE_ALIASES: dict[str, str] = {
     "asia times": "Asia Times",
 }
 
-SOURCE_HOMEPAGES: dict[str, str] = {
-    "AP": "https://apnews.com",
-    "Ars Technica": "https://arstechnica.com",
-    "Asia Times": "https://asiatimes.com",
-    "Bangkok Post": "https://www.bangkokpost.com",
-    "BBC": "https://www.bbc.com",
-    "Bloomberg": "https://www.bloomberg.com",
-    "Channel NewsAsia": "https://www.channelnewsasia.com",
-    "EJ Insight": "https://www.ejinsight.com",
-    "Financial Times": "https://www.ft.com",
-    "HK Free Press": "https://hongkongfp.com",
-    "HK01": "https://www.hk01.com",
-    "HKSAR Government": "https://www.info.gov.hk",
-    "IEEE Spectrum": "https://spectrum.ieee.org",
-    "Jakarta Post": "https://www.thejakartapost.com",
-    "Ming Pao": "https://www.mingpao.com",
-    "Nikkei Asia": "https://asia.nikkei.com",
-    "Philippine Star": "https://www.philstar.com",
-    "Reuters": "https://www.reuters.com",
-    "RTHK": "https://news.rthk.hk",
-    "South China Morning Post": "https://www.scmp.com",
-    "The Standard": "https://www.thestandard.com.hk",
-    "The Straits Times": "https://www.straitstimes.com",
-    "The Verge": "https://www.theverge.com",
-    "Wall Street Journal": "https://www.wsj.com",
-    "Wired": "https://www.wired.com",
-}
-
-CATEGORY_RSS_FEEDS: dict[str, tuple[str, ...]] = {
-    "TECHNOLOGY": (
-        "https://news.google.com/rss/search?q=(technology+OR+ai+OR+cybersecurity)+when:2d&hl=en-US&gl=US&ceid=US:en",
-        "https://news.google.com/rss/search?q=(technology+OR+ai+OR+cybersecurity)+when:2d+(source:Reuters+OR+source:AP+OR+source:Bloomberg+OR+source:BBC+OR+source:Financial+Times+OR+source:The+Verge+OR+source:Ars+Technica+OR+source:MIT+Technology+Review+OR+source:Wired+OR+source:IEEE+Spectrum)&hl=en-US&gl=US&ceid=US:en",
-    ),
-    "SOUTHEAST ASIA": (
-        "https://news.google.com/rss/search?q=(Southeast+Asia+OR+ASEAN+OR+Singapore+OR+Indonesia+OR+Malaysia+OR+Thailand+OR+Philippines+OR+Vietnam)+when:2d&hl=en-US&gl=US&ceid=US:en",
-    ),
-    "HONG KONG": (
-        "https://news.google.com/rss/search?q=(Hong+Kong+OR+HKSAR+OR+LegCo+OR+Hang+Seng)+when:2d&hl=en-US&gl=US&ceid=US:en",
-        "https://news.google.com/rss/search?q=(Hong+Kong+economy+OR+Hong+Kong+property+OR+Hong+Kong+finance+OR+Hong+Kong+stock+market)+when:2d&hl=en-US&gl=US&ceid=US:en",
-        "https://news.google.com/rss/search?q=(Hong+Kong+OR+Hong+Kong+technology+OR+Hong+Kong+startup+OR+Hong+Kong+business)+when:2d&hl=en-US&gl=US&ceid=US:en",
-        "https://news.google.com/rss/search?q=(Hong+Kong+politics+OR+Hong+Kong+policy+OR+Hong+Kong+government+OR+Hong+Kong+regulation)+when:2d&hl=en-US&gl=US&ceid=US:en",
-    ),
-}
-
-CATEGORY_ALLOWED_SOURCES: dict[str, tuple[str, ...]] = {
-    "TECHNOLOGY": (
-        "Reuters",
-        "AP",
-        "Bloomberg",
-        "BBC",
-        "Financial Times",
-        "The Verge",
-        "Ars Technica",
-        "MIT Technology Review",
-        "Wired",
-        "IEEE Spectrum",
-    ),
-    "SOUTHEAST ASIA": (
-        "Reuters",
-        "AP",
-        "Bloomberg",
-        "Financial Times",
-        "Nikkei Asia",
-        "Channel NewsAsia",
-        "Bangkok Post",
-        "Philippine Star",
-        "Jakarta Post",
-        "The Straits Times",
-        "South China Morning Post",
-    ),
-    "HONG KONG": (
-        "Reuters",
-        "AP",
-        "Bloomberg",
-        "Financial Times",
-        "South China Morning Post",
-        "RTHK",
-        "HK Free Press",
-        "Wall Street Journal",
-        "GovHK",
-        "HKSAR Government",
-        "The Standard",
-        "Ming Pao",
-        "HK01",
-        "EJ Insight",
-        "Asia Times",
-    ),
-}
-
-CATEGORY_ALLOWED_DOMAINS: dict[str, tuple[str, ...]] = {
-    "TECHNOLOGY": (
-        "reuters.com",
-        "apnews.com",
-        "bloomberg.com",
-        "bbc.com",
-        "ft.com",
-        "theverge.com",
-        "arstechnica.com",
-        "technologyreview.com",
-        "wired.com",
-        "spectrum.ieee.org",
-    ),
-    "SOUTHEAST ASIA": (
-        "reuters.com",
-        "apnews.com",
-        "bloomberg.com",
-        "ft.com",
-        "asia.nikkei.com",
-        "channelnewsasia.com",
-        "bangkokpost.com",
-        "philstar.com",
-        "thejakartapost.com",
-        "straitstimes.com",
-        "scmp.com",
-    ),
-    "HONG KONG": (
-        "reuters.com",
-        "apnews.com",
-        "bloomberg.com",
-        "ft.com",
-        "scmp.com",
-        "news.rthk.hk",
-        "rthk.hk",
-        "hongkongfp.com",
-        "wsj.com",
-        "info.gov.hk",
-        "news.gov.hk",
-        "thestandard.com.hk",
-        "mingpao.com",
-        "hk01.com",
-        "ejinsight.com",
-        "asiatimes.com",
-    ),
-}
-
 
 def _clean_snippet(value: str) -> str:
     text = html.unescape(value or "")
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(r"\s*\[\s*(?:\.\.\.|…)\s*\]\s*$", "", text)
-    text = re.sub(r"\s*\[\s*&?#8230;\s*\]\s*$", "", text, flags=re.IGNORECASE)
     return text.strip()
 
 
@@ -240,13 +107,7 @@ def _normalize_news_url(raw_url: str) -> str:
     for key, value in parse_qsl(parts.query, keep_blank_values=False):
         lowered = key.lower()
         if lowered.startswith("utm_") or lowered in {
-            "gclid",
-            "fbclid",
-            "igshid",
-            "mc_cid",
-            "mc_eid",
-            "ref",
-            "ref_src",
+            "gclid", "fbclid", "igshid", "mc_cid", "mc_eid", "ref", "ref_src",
         }:
             continue
         query_pairs.append((key, value))
@@ -259,81 +120,6 @@ def _normalize_news_url(raw_url: str) -> str:
         fragment="",
     )
     return urlunsplit(normalized)
-
-
-def _is_google_news_url(raw_url: str) -> bool:
-    host = urlparse((raw_url or "").strip()).netloc.lower()
-    return host == "news.google.com" or host.endswith(".news.google.com")
-
-
-def _extract_direct_url_candidate(raw_url: str) -> str:
-    value = (raw_url or "").strip()
-    if not value:
-        return ""
-    parsed = urlparse(value)
-    if parsed.scheme in {"http", "https"} and not _is_google_news_url(value):
-        return value
-    query = parse_qs(parsed.query)
-    for key in ("url", "u", "q"):
-        first = next(iter(query.get(key, [])), "").strip()
-        if not first:
-            continue
-        decoded = unquote(first)
-        candidate = decoded if decoded.startswith(("http://", "https://")) else first
-        if candidate.startswith(("http://", "https://")) and not _is_google_news_url(candidate):
-            return candidate
-    return ""
-
-
-def _extract_summary_links(entry: dict[str, Any]) -> list[str]:
-    summary = str(entry.get("summary", "")).strip()
-    if not summary:
-        return []
-    links = re.findall(r'href=[\'"]([^\'"]+)[\'"]', summary, flags=re.IGNORECASE)
-    return [link.strip() for link in links if link.strip()]
-
-
-def _resolve_source_url(entry: dict[str, Any], raw_url: str) -> str:
-    candidates: list[str] = []
-    candidates.append(raw_url)
-    # source.href in Google News RSS is the outlet homepage, not the article URL — skip it
-    raw_links = entry.get("links")
-    if isinstance(raw_links, list):
-        for link_row in raw_links:
-            if isinstance(link_row, dict):
-                href = str(link_row.get("href", "")).strip()
-                if href:
-                    candidates.append(href)
-    candidates.extend(_extract_summary_links(entry))
-
-    for candidate in candidates:
-        direct = _extract_direct_url_candidate(candidate)
-        if direct:
-            return direct
-    if _is_google_news_url(raw_url):
-        source_name = _extract_source(entry, raw_url)
-        homepage = SOURCE_HOMEPAGES.get(source_name)
-        if homepage:
-            return homepage
-    return raw_url
-
-
-def _extract_source(entry: dict[str, Any], url: str) -> str:
-    raw_source = ""
-    source_obj = entry.get("source")
-    if isinstance(source_obj, dict):
-        raw_source = str(source_obj.get("title", "")).strip()
-    if not raw_source:
-        raw_source = str(entry.get("author", "")).strip()
-    if not raw_source:
-        title = str(entry.get("title", "")).strip()
-        if " - " in title:
-            possible = title.rsplit(" - ", 1)[-1].strip()
-            if len(possible) <= 80:
-                raw_source = possible
-    if not raw_source:
-        raw_source = _source_from_url(url)
-    return _canonical_source(raw_source)
 
 
 def _parse_published(raw_published: Any) -> datetime | None:
@@ -351,75 +137,49 @@ def _parse_published(raw_published: Any) -> datetime | None:
     return None
 
 
-def _from_rss_feed(url: str) -> list[dict[str, Any]]:
+def _fetch_brave_category(category: str, *, api_key: str) -> list[dict[str, Any]]:
+    query = CATEGORY_QUERIES[category]
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
-        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "X-Subscription-Token": api_key,
+    }
+    params: dict[str, Any] = {
+        "q": query,
+        "count": 20,
+        "freshness": "pd",
+        "search_lang": "en",
     }
     try:
         response = retry_call(
-            lambda: requests.get(url, timeout=15, headers=headers),
+            lambda: requests.get(BRAVE_NEWS_URL, headers=headers, params=params, timeout=15),
             attempts=3,
             base_delay_seconds=1.0,
             retry_on=lambda exc: isinstance(exc, requests.RequestException),
         )
     except requests.RequestException:
         return []
-
     if response.status_code >= 400:
         return []
+    try:
+        data = response.json()
+    except ValueError:
+        return []
 
-    parsed = feedparser.parse(response.text)
+    now = datetime.utcnow()
     rows: list[dict[str, Any]] = []
-    for entry in parsed.entries:
-        entry_link = str(entry.get("link", "")).strip()
-        resolved_link = _resolve_source_url(entry, entry_link)
-        rows.append(
-            {
-                "title": entry.get("title", "(Untitled)"),
-                "url": resolved_link,
-                "source": _extract_source(entry, resolved_link),
-                "published_at": entry.get("published") or entry.get("updated"),
-                "snippet": entry.get("summary", ""),
-            }
-        )
+    for i, result in enumerate(data.get("results", [])):
+        source_obj = result.get("source") or {}
+        source_name = source_obj.get("name", "") or _source_from_url(result.get("url", ""))
+        rows.append({
+            "title": result.get("title", "(Untitled)"),
+            "url": result.get("url", ""),
+            "source": source_name,
+            # Assign synthetic timestamps to preserve Brave's result order (newest first)
+            "published_at": now - timedelta(minutes=i),
+            "snippet": (result.get("description", "") or "").strip(),
+        })
     return rows
-
-
-def _is_allowed_source(*, category: str, source: str, url: str) -> bool:
-    source_key = _source_key(source)
-    allowed_source_keys = {
-        _source_key(_canonical_source(name))
-        for name in CATEGORY_ALLOWED_SOURCES.get(category, ())
-    }
-    if source_key in allowed_source_keys:
-        return True
-    source_tokens = set(source_key.split())
-    for allowed_key in allowed_source_keys:
-        allowed_tokens = set(allowed_key.split())
-        if allowed_tokens and allowed_tokens.issubset(source_tokens):
-            return True
-    domain = _source_from_url(url)
-    for allowed_domain in CATEGORY_ALLOWED_DOMAINS.get(category, ()):
-        if domain == allowed_domain or domain.endswith(f".{allowed_domain}"):
-            return True
-    return False
-
-
-def _collect_category_rows(category: str) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for feed_url in CATEGORY_RSS_FEEDS.get(category, ()):
-        rows.extend(_from_rss_feed(feed_url))
-    return [
-        row
-        for row in rows
-        if _is_allowed_source(
-            category=category,
-            source=str(row.get("source", "")),
-            url=str(row.get("url", "")),
-        )
-    ]
 
 
 def _normalize(rows: list[dict[str, Any]]) -> list[NewsItem]:
@@ -483,11 +243,7 @@ def _collect_mock_hk() -> list[NewsItem]:
 
 
 def collect_news_by_category(*, settings: Settings, logger: JsonLogger) -> dict[str, list[NewsItem]]:
-    """Collect news items grouped by category.
-
-    Returns a dict like {"TECHNOLOGY": [...], "SOUTHEAST ASIA": [...], "HONG KONG": [...]}
-    with global deduplication across categories.
-    """
+    """Collect news per category using parallel Brave Search API agents."""
     step_start = perf_counter()
     if settings.mock_mode:
         tech = _collect_mock()
@@ -501,61 +257,76 @@ def collect_news_by_category(*, settings: Settings, logger: JsonLogger) -> dict[
         )
         return {"TECHNOLOGY": tech, "SOUTHEAST ASIA": sea, "HONG KONG": hk}
 
+    if not settings.brave_api_key:
+        logger.warning("brave_api_key_missing", step="news")
+        return {"TECHNOLOGY": [], "SOUTHEAST ASIA": [], "HONG KONG": []}
+
     cache_path = Path(settings.news_cache_path)
     cache = _read_cache(cache_path)
     now = datetime.utcnow()
     fetched_at_raw = cache.get("fetched_at")
+    fetched_at = None
     if isinstance(fetched_at_raw, str):
         try:
             fetched_at = datetime.fromisoformat(fetched_at_raw)
         except ValueError:
-            fetched_at = None
-    else:
-        fetched_at = None
+            pass
 
-    cache_version = cache.get("version")
     if (
-        cache_version == CACHE_VERSION
+        cache.get("version") == CACHE_VERSION
         and fetched_at
         and now - fetched_at < timedelta(seconds=settings.news_cache_ttl_seconds)
+        and cache.get("category_counts")
     ):
-        cached_items = _normalize(cache.get("items", []))
+        cached_flat = _normalize(cache.get("items", []))
+        counts = cache.get("category_counts", {})
+        categorized: dict[str, list[NewsItem]] = {}
+        offset = 0
+        for cat in ("TECHNOLOGY", "SOUTHEAST ASIA", "HONG KONG"):
+            n = counts.get(cat, 0)
+            categorized[cat] = cached_flat[offset : offset + n]
+            offset += n
         logger.info(
             "news_cache_hit",
             step="news",
-            item_count=len(cached_items),
+            item_count=len(cached_flat),
             latency=perf_counter() - step_start,
         )
-        # When cache is hit, we still need categorized data.
-        # Re-collect to get proper categorization since cache is flat.
-        pass  # Fall through to re-collect
+        return categorized
 
+    categories = ("TECHNOLOGY", "SOUTHEAST ASIA", "HONG KONG")
+    raw_by_category: dict[str, list[dict[str, Any]]] = {}
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(_fetch_brave_category, cat, api_key=settings.brave_api_key): cat
+            for cat in categories
+        }
+        for future in as_completed(futures):
+            cat = futures[future]
+            try:
+                raw_by_category[cat] = future.result()
+            except Exception:  # noqa: BLE001
+                raw_by_category[cat] = []
+
+    categorized = {}
     category_counts: dict[str, int] = {}
-    categorized: dict[str, list[NewsItem]] = {
-        "TECHNOLOGY": [],
-        "SOUTHEAST ASIA": [],
-        "HONG KONG": [],
-    }
     seen_urls: set[str] = set()
 
-    for category in ("TECHNOLOGY", "SOUTHEAST ASIA", "HONG KONG"):
-        category_items = _normalize(_collect_category_rows(category))
+    for category in categories:
+        cat_items = _normalize(raw_by_category.get(category, []))
         picked: list[NewsItem] = []
-        for item in category_items:
-            item_url = str(item.url)
-            if item_url in seen_urls:
+        for item in cat_items:
+            url = str(item.url)
+            if url in seen_urls:
                 continue
             picked.append(item)
-            seen_urls.add(item_url)
+            seen_urls.add(url)
             if len(picked) >= CATEGORY_TARGET_MAX:
                 break
         category_counts[category] = len(picked)
         categorized[category] = picked
 
-    # Flatten for cache (backward-compatible cache format)
-    all_items: list[NewsItem] = []
-    for cat_items in categorized.values():
-        all_items.extend(cat_items)
+    all_items = [item for cat in categories for item in categorized[cat]]
     _write_cache(
         cache_path,
         {
@@ -579,7 +350,7 @@ def collect_news_by_category(*, settings: Settings, logger: JsonLogger) -> dict[
 
 
 def collect_news_items(*, settings: Settings, logger: JsonLogger) -> list[NewsItem]:
-    """Legacy flat collection — returns all news items deduplicated."""
+    """Flat collection — returns all news items deduplicated across categories."""
     categorized = collect_news_by_category(settings=settings, logger=logger)
     result: list[NewsItem] = []
     seen_urls: set[str] = set()

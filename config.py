@@ -52,6 +52,7 @@ class Settings:
     gmail_blocked_senders: list[str]
     gmail_max_threads: int
 
+    brave_api_key: str
     news_cache_path: str
     news_cache_ttl_seconds: int
 
@@ -117,6 +118,7 @@ def load_settings() -> Settings:
         gmail_excluded_labels=_split_csv(os.getenv("GMAIL_EXCLUDED_LABELS")),
         gmail_blocked_senders=_split_csv(os.getenv("GMAIL_BLOCKED_SENDERS")),
         gmail_max_threads=int(os.getenv("GMAIL_MAX_THREADS", "20")),
+        brave_api_key=os.getenv("BRAVE_API_KEY", ""),
         news_cache_path=os.getenv("NEWS_CACHE_PATH", "/tmp/morning_digest_news_cache.json"),
         news_cache_ttl_seconds=int(os.getenv("NEWS_CACHE_TTL_SECONDS", "43200")),
         drive_folder_id=os.getenv("DRIVE_FOLDER_ID", ""),

@@ -7,7 +7,7 @@ from ai.deepseek_client import DeepSeekClient, DeepSeekError
 from auth.google_oauth import get_google_credentials
 from collectors.calendar import collect_calendar_events
 from collectors.gmail import collect_gmail_threads
-from collectors.news import collect_news_by_category, collect_news_items
+from collectors.news import collect_news_by_category
 from collectors.weather import collect_weather
 from config import Settings, load_settings
 from distribution.calendar_event import create_digest_calendar_event
@@ -62,9 +62,9 @@ def run(settings: Settings) -> int:
         logger=logger,
     )
 
-    # Collect news per category — each category gets its own RSS-fetched pool
+    # Collect news per category via parallel Brave Search agents
     categorized_news = collect_news_by_category(settings=settings, logger=logger)
-    news_items = collect_news_items(settings=settings, logger=logger)
+    news_items = [item for cat_items in categorized_news.values() for item in cat_items]
     ranked_news = []
 
     weather_snapshot = collect_weather(settings=settings, logger=logger)
@@ -101,7 +101,6 @@ def run(settings: Settings) -> int:
                 if not cat_items:
                     continue
                 cat_ranked = deepseek.rank_news(cat_items, category=cat_name)
-                cat_ranked = deepseek.refine_news_summaries(cat_ranked)
                 ranked_by_cat[cat_name] = cat_ranked
                 all_ranked.extend(cat_ranked)
 

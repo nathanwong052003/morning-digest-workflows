@@ -26,6 +26,9 @@ jobs:
       # --- Mock mode forces no external API calls ---
       MOCK_MODE: "true"
 
+      # --- Digest counter (use a temp path so test runs never touch the real counter) ---
+      DIGEST_COUNTER_PATH: /tmp/test_digest_counter.json
+
       # --- News ---
       NEWS_CACHE_PATH: /tmp/morning_digest_news_cache.json
       NEWS_CACHE_TTL_SECONDS: "43200"

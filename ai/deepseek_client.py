@@ -317,7 +317,7 @@ class DeepSeekClient:
         }
         tags = tags_by_category.get(category, "News")
         summary_length = (
-            "3-4 detailed complete sentences providing substantive context and detail"
+            "3-4 detailed complete sentences providing substantive context and background"
             if category in ("SOUTHEAST ASIA", "HONG KONG")
             else "2-3 detailed complete sentences providing substantive information"
         )
@@ -331,6 +331,7 @@ class DeepSeekClient:
                 "Use the exact item_id provided in input. relevance is integer 0-100. "
                 f"Tags for this category: {tags}. "
                 f"summary must be {summary_length}. "
+                "Write each summary as the final polished version — detailed, standalone, and complete. "
                 "Never end mid-sentence. Do not include ellipsis. "
                 "Do NOT mention the news source or publication name in the summary text."
             ),
@@ -416,51 +417,3 @@ class DeepSeekClient:
         ranked_items.sort(key=lambda item: item.relevance, reverse=True)
         return ranked_items
 
-    def refine_news_summaries(self, ranked_news: list[RankedNewsItem]) -> list[RankedNewsItem]:
-        if not ranked_news:
-            return ranked_news
-        payload = {
-            "task": (
-                "Rewrite each item into a detailed summary using title/source/snippet context. "
-                "Return JSON object with key 'summaries' containing list of {item_id,summary}. "
-                "For SOUTHEAST ASIA and HONG KONG items, write longer 3-4 sentence summaries with more context and detail. "
-                "For TECHNOLOGY items, write 2-3 sentence summaries. "
-                "Summary must be complete sentences, not ending mid-sentence, and must not include ellipsis. "
-                "Do NOT mention the news source or publication name in the summary text."
-            ),
-            "items": [
-                {
-                    "item_id": f"news_{idx}",
-                    "title": item.title,
-                    "source": item.source,
-                    "url": str(item.url),
-                    "snippet": item.snippet,
-                    "current_summary": item.ai_summary,
-                }
-                for idx, item in enumerate(ranked_news[:24])
-            ],
-        }
-        result = self._call_json(step="ai_refine_news_summaries", user_payload=payload)
-        summary_rows = result.get("summaries", [])
-        if not isinstance(summary_rows, list):
-            summary_rows = []
-
-        summary_map: dict[int, str] = {}
-        for row in summary_rows:
-            if not isinstance(row, dict):
-                continue
-            raw_item_id = str(row.get("item_id", "")).strip()
-            raw_summary = str(row.get("summary", "")).strip()
-            if not raw_item_id.startswith("news_") or not raw_summary:
-                continue
-            try:
-                item_index = int(raw_item_id.split("_", 1)[1])
-            except (TypeError, ValueError):
-                continue
-            summary_map[item_index] = raw_summary
-
-        for idx, item in enumerate(ranked_news):
-            replacement = summary_map.get(idx, "").strip()
-            if replacement:
-                item.ai_summary = replacement
-        return ranked_news
