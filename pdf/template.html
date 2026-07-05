@@ -40,6 +40,11 @@
       white-space: nowrap;
     }
 
+    .digest-title .title-emoji {
+      display: inline-block;
+      vertical-align: -4px;
+    }
+
     .digest-date {
       font-size: 13px;
       color: #666666;
@@ -168,7 +173,7 @@
 <body>
   <div class="digest-wrapper">
     <div class="digest-header">
-      <div class="digest-title">☀ Morning Digest</div>
+      <div class="digest-title"><span class="title-emoji"><svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="5" fill="#F4A623"/><g stroke="#F4A623" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="6" x2="12" y2="3"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="18" y1="12" x2="21" y2="12"/><line x1="6" y1="12" x2="3" y2="12"/><line x1="15.5" y1="8.5" x2="17.8" y2="6.2"/><line x1="8.5" y1="8.5" x2="6.2" y2="6.2"/><line x1="15.5" y1="15.5" x2="17.8" y2="17.8"/><line x1="8.5" y1="15.5" x2="6.2" y2="17.8"/></g></svg></span> Morning Digest</div>
       <div class="digest-date">{{DIGEST_DATE}}</div>
     </div>
     {{WARNING_BANNER_HTML}}

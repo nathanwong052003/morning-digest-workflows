@@ -252,6 +252,103 @@ def _pill_html(label: str) -> str:
 
 
 
+def _cloud_svg(fill: str = "#95A1AC") -> str:
+    return (
+        f'<g fill="{fill}">'
+        '<circle cx="9" cy="13" r="4"/>'
+        '<circle cx="14" cy="10.5" r="5"/>'
+        '<circle cx="18.5" cy="13.5" r="3.2"/>'
+        '<rect x="6.5" y="13" width="14" height="6.5" rx="3.25"/>'
+        '</g>'
+    )
+
+
+def _sun_svg(cx: float = 12, cy: float = 12, r: float = 5, fill: str = "#F4A623") -> str:
+    rays = [
+        (cx, cy - r - 1, cx, cy - r - 4),
+        (cx, cy + r + 1, cx, cy + r + 4),
+        (cx + r + 1, cy, cx + r + 4, cy),
+        (cx - r - 1, cy, cx - r - 4, cy),
+        (cx + r * 0.7, cy - r * 0.7, cx + r * 1.3, cy - r * 1.3),
+        (cx - r * 0.7, cy - r * 0.7, cx - r * 1.3, cy - r * 1.3),
+        (cx + r * 0.7, cy + r * 0.7, cx + r * 1.3, cy + r * 1.3),
+        (cx - r * 0.7, cy + r * 0.7, cx - r * 1.3, cy + r * 1.3),
+    ]
+    lines = "".join(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"/>' for x1, y1, x2, y2 in rays)
+    return (
+        f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{fill}"/>'
+        f'<g stroke="{fill}" stroke-width="1.8" stroke-linecap="round">{lines}</g>'
+    )
+
+
+def _drops_svg(color: str = "#5EA8E0") -> str:
+    return (
+        f'<g fill="{color}">'
+        '<circle cx="8" cy="21" r="1.4"/>'
+        '<circle cx="12.5" cy="22.5" r="1.4"/>'
+        '<circle cx="17" cy="21" r="1.4"/>'
+        '</g>'
+    )
+
+
+def _snowflakes_svg(color: str = "#8FC7E8", count: int = 3) -> str:
+    positions = [(8, 21), (12.5, 22.5), (17, 21)][:count]
+    flakes = []
+    for x, y in positions:
+        flakes.append(
+            f'<g stroke="{color}" stroke-width="1.3" stroke-linecap="round">'
+            f'<line x1="{x-1.3}" y1="{y}" x2="{x+1.3}" y2="{y}"/>'
+            f'<line x1="{x}" y1="{y-1.3}" x2="{x}" y2="{y+1.3}"/>'
+            f'<line x1="{x-0.9}" y1="{y-0.9}" x2="{x+0.9}" y2="{y+0.9}"/>'
+            f'<line x1="{x-0.9}" y1="{y+0.9}" x2="{x+0.9}" y2="{y-0.9}"/>'
+            '</g>'
+        )
+    return "".join(flakes)
+
+
+def _bolt_svg(color: str = "#F2C230") -> str:
+    return f'<polygon points="13,13 9,19 12,19 11,23 16,16 13,16" fill="{color}"/>'
+
+
+WEATHER_ICON_SVGS: dict[str, str] = {
+    "sun": _sun_svg(),
+    "sun_small_cloud": _sun_svg(cx=9, cy=8, r=3.6) + _cloud_svg("#ADB8C2"),
+    "sun_cloud": _sun_svg(cx=16.5, cy=7.5, r=3.6) + _cloud_svg("#95A1AC"),
+    "cloud": _cloud_svg("#89959F"),
+    "fog": (
+        _cloud_svg("#B7C0C9")
+        + '<g stroke="#8A94A0" stroke-width="1.5" stroke-linecap="round">'
+        '<line x1="4" y1="20.5" x2="20" y2="20.5"/>'
+        '<line x1="6" y1="23" x2="18" y2="23"/>'
+        '</g>'
+    ),
+    "sun_rain": _sun_svg(cx=16.5, cy=7.5, r=3.2) + _cloud_svg("#95A1AC") + _drops_svg(),
+    "rain": _cloud_svg("#89959F") + _drops_svg(),
+    "snow_cloud": _cloud_svg("#95A1AC") + _snowflakes_svg(count=2),
+    "snow": _cloud_svg("#95A1AC") + _snowflakes_svg(count=3),
+    "storm": _cloud_svg("#6B7684") + _bolt_svg(),
+}
+
+ICON_CHAR_TO_KEY: dict[str, str] = {
+    "☀️": "sun",
+    "🌤️": "sun_small_cloud",
+    "⛅️": "sun_cloud",
+    "☁️": "cloud",
+    "🌫️": "fog",
+    "🌦️": "sun_rain",
+    "🌧️": "rain",
+    "🌨️": "snow_cloud",
+    "❄️": "snow",
+    "⛈️": "storm",
+}
+
+
+def _weather_icon_svg(icon_char: str) -> str:
+    key = ICON_CHAR_TO_KEY.get(icon_char, "cloud")
+    body = WEATHER_ICON_SVGS[key]
+    return f'<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg">{body}</svg>'
+
+
 def _weather_html(weather: WeatherSnapshot | None) -> str:
     if not weather or not weather.hours:
         return ""
@@ -265,7 +362,7 @@ def _weather_html(weather: WeatherSnapshot | None) -> str:
         cells.append(
             f'<div style="flex:1 1 0%;text-align:center;padding:8px 4px;{border_left}{border_right}">'
             f'<div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">{_escape(hour.hour_label)}</div>'
-            f'<div style="font-size:22px;line-height:1.2;margin:4px 0;font-feature-settings:\'color-colr\';">{_escape(hour.icon)}</div>'
+            f'<div style="margin:4px 0;display:flex;justify-content:center;">{_weather_icon_svg(hour.icon)}</div>'
             f'<div style="font-size:15px;font-weight:600;color:#111;">{round(hour.temperature_c, 1)}°</div>'
             f'{precip_html}'
             f'</div>'
